@@ -1,0 +1,30 @@
+{
+  "appId": "com.lafm.cryptotradingterminal",
+  "productName": "Crypto Trading Terminal - LAFM",
+  "directories": {
+    "output": "dist-electron",
+    "buildResources": "build"
+  },
+  "files": [
+    "electron/**/*",
+    "frontend/dist/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "backend/dist/trading_app.exe",
+      "to": "trading_app.exe"
+    }
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "assets/icon.png",
+    "publisherName": "LAFM"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "LAFM Trading Terminal"
+  }
+}

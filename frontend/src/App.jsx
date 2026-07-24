@@ -1,0 +1,262 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import Chart from './components/Chart';
+import TradingPanel from './components/TradingPanel';
+import Onboarding from './components/Onboarding';
+import SplashScreen from './components/SplashScreen';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8765';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8765/ws/market';
+const REQUEST_TIMEOUT = 10000;
+
+const getReconnectDelay = (attempt) => {
+  const base = 1000;
+  const maxDelay = 30000;
+  const delay = Math.min(base * Math.pow(2, attempt), maxDelay);
+  const jitter = Math.random() * 1000;
+  return delay + jitter;
+};
+
+export default function App() {
+  const [licenseKey, setLicenseKey] = useState('');
+  const [licenseValid, setLicenseValid] = useState(false);
+  const [isLicensed, setIsLicensed] = useState(false);
+  const [candleData, setCandleData] = useState([]);
+  const [signals, setSignals] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [positions, setPositions] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [splashComplete, setSplashComplete] = useState(false);
+  const wsRef = useRef(null);
+
+  const fetchWithTimeout = useCallback(async (url, options = {}, timeout = REQUEST_TIMEOUT) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        const text = await res.text();
+        let detail = text;
+        try { detail = JSON.parse(text).detail || text; } catch { /* ignore */ }
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      return await res.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, []);
+
+  const connectWebSocket = useCallback(() => {
+    if (wsRef.current) wsRef.current.close();
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnected(true);
+      setReconnectAttempt(0);
+      setError('');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'market_data') {
+          setCandleData(prev => {
+            const next = [...prev, msg.candle];
+            return next.slice(-500);
+          });
+          setSignals(msg.signals);
+        } else if (msg.type === 'account_update') {
+          setAccount(msg.data);
+        }
+      } catch (e) {
+        console.error('Failed to parse WebSocket message', e);
+      }
+    };
+
+    ws.onerror = () => {
+      setError('WebSocket connection error');
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      const delay = getReconnectDelay(reconnectAttempt);
+      setReconnectAttempt(prev => prev + 1);
+      setTimeout(connectWebSocket, delay);
+    };
+  }, [reconnectAttempt]);
+
+  useEffect(() => {
+    fetchAccount();
+    const interval = setInterval(fetchAccount, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const validateLicense = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/license/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: licenseKey }),
+      });
+      if (data.valid) {
+        setLicenseValid(true);
+        setIsLicensed(true);
+        const onboardingDone = localStorage.getItem('lafm_onboarding_complete');
+        if (!onboardingDone) {
+          setShowOnboarding(true);
+        } else {
+          connectWebSocket();
+          fetchAccount();
+          fetchPositions();
+          fetchHistory();
+        }
+      } else {
+        setError(data.message || 'Invalid license');
+      }
+    } catch (e) {
+      let message = 'Cannot connect to backend. Ensure it is running.';
+      if (e.name === 'AbortError') {
+        message = 'License validation timed out. Backend may be unreachable.';
+      }
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('lafm_onboarding_complete', 'true');
+    setShowOnboarding(false);
+    connectWebSocket();
+    fetchAccount();
+    fetchPositions();
+    fetchHistory();
+  };
+
+  const fetchAccount = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/balance`);
+      setAccount(data);
+    } catch (e) {
+      // silent background polls
+    }
+  };
+
+  const fetchPositions = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/positions`);
+      setPositions(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/history`);
+      setHistory(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const handleOrderSubmit = async (order) => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/trading/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(order),
+      });
+      if (data.success) {
+        fetchPositions();
+        fetchAccount();
+        setError('');
+      } else {
+        setError(data.detail || 'Order failed');
+      }
+    } catch (e) {
+      let message = 'Failed to place order';
+      if (e.name === 'AbortError') message = 'Order request timed out.';
+      setError(message);
+    }
+  };
+
+  if (!splashComplete) {
+    return <SplashScreen onComplete={() => setSplashComplete(true)} />;
+  }
+
+  if (!isLicensed) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-900 rounded-xl p-8 border border-slate-700 shadow-2xl">
+          <h1 className="text-2xl font-bold text-slate-100 mb-2">Crypto Trading Terminal</h1>
+          <p className="text-slate-400 text-sm mb-6">Enter your license key to activate the application.</p>
+          {error && <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">{error}</div>}
+          <input
+            type="text"
+            value={licenseKey}
+            onChange={(e) => setLicenseKey(e.target.value)}
+            placeholder="XXXX-XXXX-XXXX-XXXX"
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-slate-200 mb-4 focus:outline-none focus:border-blue-500 font-mono"
+            onKeyDown={(e) => e.key === 'Enter' && validateLicense()}
+          />
+          <button
+            onClick={validateLicense}
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-3 rounded-lg transition-colors"
+          >
+            {loading ? 'Validating...' : 'Activate License'}
+          </button>
+          <p className="text-xs text-slate-500 mt-4 text-center">Requires backend server running on port 8765</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (showOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200">
+      <header className="bg-slate-900 border-b border-slate-700 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold text-slate-100">Crypto Trading Terminal</h1>
+          <span className="flex items-center gap-1.5 text-xs">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+            <span className="text-slate-400">{connected ? 'Connected' : 'Disconnected'}</span>
+          </span>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-slate-400">BTC/USDT</span>
+          <span className="font-mono text-slate-200">{candleData.length > 0 ? Number(candleData[candleData.length - 1]?.close).toFixed(2) : '---'}</span>
+        </div>
+      </header>
+
+      {error && (
+        <div className="mx-6 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="flex h-[calc(100vh-60px)]">
+        <div className="flex-1 p-4">
+          <div className="h-full relative">
+            <Chart data={candleData} signals={signals} />
+          </div>
+        </div>
+        <div className="w-80 p-4 border-l border-slate-700">
+          <TradingPanel account={account} onOrderSubmit={handleOrderSubmit} />
+        </div>
+      </div>
+    </div>
+  );
+}

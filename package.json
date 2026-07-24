@@ -1,0 +1,51 @@
+{
+    "name": "crypto-trading-terminal",
+    "version": "1.0.1",
+    "description": "Algorithmic Crypto Trading & Paper Trading Desktop Application",
+    "author": "LAFM",
+    "main": "electron/main.js",
+    "scripts": {
+        "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "dev:frontend": "cd frontend && npm run dev",
+        "dev:backend": "cd backend && uvicorn main:app --reload --host 127.0.0.1 --port 8765",
+        "build:frontend": "cd frontend && npm run build",
+        "build:backend": "cd backend && pyinstaller trading_app.spec",
+        "build:electron": "electron-builder --win --config electron-builder.json",
+        "build": "npm run build:frontend && npm run build:backend && npm run build:electron",
+        "postinstall": "cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
+        "prebuild:electron": "node scripts/check-assets.js",
+        "deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1",
+        "release": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 -Publish"
+    },
+  "build": {
+    "appId": "com.lafm.cryptotradingterminal",
+    "productName": "Crypto Trading Terminal - LAFM",
+    "author": "LAFM",
+    "publish": {
+      "provider": "github",
+      "owner": "lafm",
+      "repo": "crypto-trading-app",
+      "releaseType": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png",
+      "publisherName": "LAFM"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LAFM Trading Terminal"
+    }
+  },
+    "devDependencies": {
+        "concurrently": "^8.2.2",
+        "electron": "^28.2.0",
+        "electron-builder": "^24.9.1"
+    },
+    "dependencies": {
+        "electron-updater": "^6.8.9"
+    }
+}
