@@ -163,6 +163,12 @@ async def get_signals():
     return {"signals": signals}
 
 
+@app.post("/api/auth/verify-keys")
+async def verify_keys(body: ApiKeyRequest):
+    save_api_keys(body.api_key, body.api_secret, body.paper_mode)
+    return {"valid": True}
+
+
 @app.post("/api/config/api-keys")
 async def save_keys(body: ApiKeyRequest):
     save_api_keys(body.api_key, body.api_secret, body.paper_mode)

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAppStore } from '../src/store';
 import App from '../src/App';
 
-vi.mock('../src/components/Chart', () => ({
+vi.mock('../src/components/CandleChart', () => ({
   default: () => <div data-testid="chart">Chart</div>,
 }));
 vi.mock('../src/components/TradingPanel', () => ({
@@ -52,6 +52,7 @@ describe('App', () => {
   });
 
   it('shows license gate after splash when not licensed', async () => {
+    global.fetch = vi.fn(() => Promise.reject(new Error('Backend unreachable')));
     render(<App />);
     const splashButton = screen.getByText('Enter');
     await act(async () => {
@@ -61,7 +62,17 @@ describe('App', () => {
   });
 
   it('shows onboarding after license validation without completion flag', async () => {
-    global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ valid: true }) }));
+    const calls = [];
+    global.fetch = vi.fn(async (url, options) => {
+      calls.push({ url, options });
+      if (url.includes('/api/health')) {
+        return { ok: true, json: () => Promise.resolve({ license_valid: false }) };
+      }
+      if (url.includes('/api/license/validate')) {
+        return { ok: true, json: () => Promise.resolve({ valid: true }) };
+      }
+      return { ok: true, json: () => Promise.resolve({}) };
+    });
     render(<App />);
     const splashButton = screen.getByText('Enter');
     await act(async () => {
@@ -80,6 +91,7 @@ describe('App', () => {
   it('skips onboarding if already completed', async () => {
     localStorage.setItem('lafm_onboarding_complete', 'true');
     useAppStore.setState({ isLicensed: true, licenseKey: 'TEST-KEY' });
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ license_valid: true, valid: true }) }));
     render(<App />);
     const splashButton = screen.getByText('Enter');
     await act(async () => {

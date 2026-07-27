@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import Chart from './components/Chart';
+import Chart from './components/CandleChart';
 import TradingPanel from './components/TradingPanel';
 import Onboarding from './components/Onboarding';
 import SplashScreen from './components/SplashScreen';
+import HeaderBar from './components/HeaderBar';
+import AlertsToast from './components/AlertsToast';
 import { useAppStore } from './store';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8765';
@@ -27,7 +29,8 @@ export default function App() {
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [splashComplete, setSplashComplete] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [localLicenseKey, setLocalLicenseKey] = useState(() => localStorage.getItem('lafm_license_key') || '');
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState('');
   const wsRef = useRef(null);
 
   const store = useAppStore();
@@ -99,6 +102,41 @@ export default function App() {
   }, [reconnectAttempt]);
 
   useEffect(() => {
+    if (!splashComplete) return;
+    let cancelled = false;
+    setIsBootstrapping(true);
+    setBootstrapError('');
+    fetchWithTimeout(`${API_BASE}/api/health`, {}, 8000)
+      .then(data => {
+        if (cancelled) return;
+        if (data?.license_valid) {
+          setIsLicensed(true);
+          setLicenseValid(true);
+          store.setIsLicensed?.(true);
+          store.setLicenseValid?.(true);
+        } else {
+          setIsLicensed(false);
+          setLicenseValid(false);
+          store.setIsLicensed?.(false);
+          store.setLicenseValid?.(false);
+        }
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('Health check failed:', err);
+        setIsLicensed(false);
+        setLicenseValid(false);
+        store.setIsLicensed?.(false);
+        store.setLicenseValid?.(false);
+        setBootstrapError('Backend unreachable. Running in offline mode.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsBootstrapping(false);
+      });
+    return () => { cancelled = true; };
+  }, [splashComplete]);
+
+  useEffect(() => {
     if (isLicensed && !showOnboarding) {
       const onboardingDone = typeof window !== 'undefined' ? localStorage.getItem('lafm_onboarding_complete') : null;
       if (onboardingDone) {
@@ -122,6 +160,8 @@ export default function App() {
       if (data.valid) {
         setLicenseValid(true);
         setIsLicensed(true);
+        store.setLicenseValid?.(true);
+        store.setIsLicensed?.(true);
         if (typeof window !== 'undefined') {
           localStorage.setItem('lafm_license_key', licenseKey);
         }
@@ -138,9 +178,7 @@ export default function App() {
       }
     } catch (e) {
       let message = 'Cannot connect to backend. Ensure it is running.';
-      if (e.name === 'AbortError') {
-        message = 'License validation timed out. Backend may be unreachable.';
-      }
+      if (e.name === 'AbortError') message = 'License validation timed out. Backend may be unreachable.';
       setError(message);
     } finally {
       setLoading(false);
@@ -210,6 +248,21 @@ export default function App() {
     return <SplashScreen onComplete={() => setSplashComplete(true)} />;
   }
 
+  if (isBootstrapping) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-900 rounded-xl p-8 border border-slate-700 shadow-2xl text-center">
+          <div className="text-2xl font-bold text-slate-100 mb-2">LAFM Core Engine</div>
+          <div className="text-slate-400 text-sm mb-4">Iniciando motor de trading...</div>
+          <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div className="bg-cyan-400 h-2 rounded-full animate-pulse" style={{ width: '70%' }} />
+          </div>
+          {bootstrapError && <div className="mt-3 text-xs text-red-300">{bootstrapError}</div>}
+        </div>
+      </div>
+    );
+  }
+
   if (!isLicensed) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -244,35 +297,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <header className="bg-slate-900 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            className="md:hidden text-slate-300 hover:text-white"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <h1 className="text-lg sm:text-xl font-bold text-slate-100">Crypto Trading Terminal</h1>
-          <span className="flex items-center gap-1.5 text-xs">
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-            <span className="text-slate-400 hidden sm:inline">{connected ? 'Connected' : 'Disconnected'}</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm">
-          <span className="text-slate-400">BTC/USDT</span>
-          <span className="font-mono text-slate-200">{candleData.length > 0 ? Number(candleData[candleData.length - 1]?.close).toFixed(2) : '---'}</span>
-        </div>
-      </header>
-
+      <HeaderBar account={account} connected={connected} />
       {error && (
         <div className="mx-4 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
           {error}
         </div>
       )}
-
+      <AlertsToast signals={signals} account={account} />
       <div className="flex h-[calc(100vh-60px)] relative">
         <div className={`fixed inset-0 bg-black/50 z-20 md:hidden ${sidebarOpen ? 'block' : 'hidden'}`} onClick={() => setSidebarOpen(false)} />
         <aside className={`fixed md:static inset-y-0 left-0 z-30 w-80 bg-slate-900 border-r border-slate-700 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col`}>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8765';
+
 const steps = [
   {
     id: 1,
@@ -11,7 +13,7 @@ const steps = [
   {
     id: 2,
     title: 'Connect Exchange (Optional)',
-    description: 'Enter your Binance API Key and Secret. Or skip and use Paper Trading mode to test the Edge AI system instantly.',
+    description: 'Enter your Binance API Key and Secret. Keys are encrypted locally with AES-256 and never leave your machine. Withdrawal permissions are strictly prohibited by design.',
     icon: '🔐',
   },
   {
@@ -56,6 +58,8 @@ export default function Onboarding({ onComplete }) {
   const [paperMode, setPaperMode] = useState(true);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [latencyMs, setLatencyMs] = useState(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState('');
 
   useEffect(() => {
     if (currentStep === 3) {
@@ -70,7 +74,25 @@ export default function Onboarding({ onComplete }) {
     }
   }, [currentStep]);
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    if (currentStep === 1 && !paperMode) {
+      setVerifying(true);
+      setVerifyError('');
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/verify-keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, paper_mode: false }),
+        });
+        const data = await res.json();
+        if (!data.valid) throw new Error('Invalid API credentials');
+      } catch (e) {
+        setVerifyError(e.message || 'Failed to validate API keys');
+        return;
+      } finally {
+        setVerifying(false);
+      }
+    }
     if (currentStep === steps.length - 1) {
       onComplete?.();
       return;
@@ -229,13 +251,23 @@ export default function Onboarding({ onComplete }) {
                 <div className="text-xs text-lafm-muted">Skip live credentials and simulate with $10,000 USDT</div>
               </div>
             </motion.label>
+            {!paperMode && (
+              <motion.div
+                className="bg-cyan-900/20 border border-cyan-700 rounded-lg p-3 text-xs text-cyan-200"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                Zero-Knowledge Security: credentials are stored encrypted in local SQLite (%APPDATA%/LAFM/secure.db), AES-256 + HWID-bound. Withdrawal permissions are rejected by default.
+              </motion.div>
+            )}
+            {verifyError && <div className="text-xs text-red-400">{verifyError}</div>}
           </div>
           <div className="flex justify-between mt-6">
             <motion.button onClick={handleBack} className="px-4 py-2 text-lafm-muted hover:text-lafm-text transition-colors" whileHover={{ x: -5 }} whileTap={{ scale: 0.95 }}>
               Back
             </motion.button>
-            <motion.button onClick={handleNext} className="lafm-btn-primary" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-              Next
+            <motion.button onClick={handleNext} disabled={verifying} className="lafm-btn-primary disabled:opacity-70" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+              {verifying ? 'Validating...' : 'Next'}
             </motion.button>
           </div>
         </motion.div>
