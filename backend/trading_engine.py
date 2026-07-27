@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, timezone
 from collections import deque
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass, field
@@ -407,7 +407,7 @@ class TradingEngine:
     async def start_simulation(self):
         self.running = True
         logger.info("Starting paper trading simulation...")
-        base_time = datetime.utcnow() - timedelta(minutes=30)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=30)
         base_price = 67500.0
 
         df = pd.DataFrame()
@@ -430,7 +430,7 @@ class TradingEngine:
             new_low = min(last.low, new_close) - np.random.uniform(0, 15)
             new_volume = np.random.uniform(10, 100)
 
-            if (datetime.utcnow() - last.timestamp).total_seconds() >= 60:
+            if (datetime.now(timezone.utc) - last.timestamp).total_seconds() >= 60:
                 new_candle = Candle(
                     timestamp=last.timestamp + timedelta(minutes=1),
                     open=last.close,

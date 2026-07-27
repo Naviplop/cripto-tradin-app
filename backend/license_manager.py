@@ -5,7 +5,7 @@ import os
 import platform
 import subprocess
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from logger import logger
@@ -76,7 +76,7 @@ class LicenseManager:
                 return False
 
             expiry = datetime.fromisoformat(expiry_str)
-            if datetime.utcnow() > expiry:
+            if datetime.now(timezone.utc) > expiry:
                 logger.warning("License expired")
                 return False
 

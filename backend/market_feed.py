@@ -165,10 +165,10 @@ class BinanceMarketFeed:
 
     async def _run_simulation_fallback(self):
         import random
-        from datetime import timedelta
+        from datetime import datetime, timedelta, timezone
 
         logger.info("Simulation fallback active for market data")
-        base_time = datetime.utcnow() - timedelta(minutes=30)
+        base_time = datetime.now(timezone.utc) - timedelta(minutes=30)
         base_price = 67500.0
         current_price = base_price
 
@@ -203,7 +203,7 @@ class BinanceMarketFeed:
             new_volume = random.uniform(10, 100)
 
             candle = Candle(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 open=last_close,
                 high=new_high,
                 low=new_low,

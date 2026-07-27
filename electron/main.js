@@ -33,8 +33,8 @@ loadDotenv();
 autoUpdater.checkForUpdatesAndNotify();
 autoUpdater.setFeedURL({
   provider: 'github',
-  owner: 'lafm',
-  repo: 'crypto-trading-app',
+  owner: 'Naviplop',
+  repo: 'cripto-tradin-app',
 });
 
 autoUpdater.on('update-available', () => {

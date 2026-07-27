@@ -4,7 +4,7 @@ import hmac
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,7 +24,7 @@ def test_hwid_is_consistent():
 
 def _build_license(hwid, days_valid=365):
     secret = os.environ.get("LICENSE_SECRET", "")
-    expiry = (datetime.utcnow() + timedelta(days=days_valid)).isoformat()
+    expiry = (datetime.now(timezone.utc) + timedelta(days=days_valid)).isoformat()
     message = f"{hwid}|{expiry}"
     sig = hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
     payload = {"hwid": hwid, "exp": expiry, "sig": sig}

@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ class Storage:
         try:
             conn.execute(
                 "INSERT INTO account_snapshots (balance, initial_balance, total_equity, timestamp) VALUES (?, ?, ?, ?)",
-                (balance, initial_balance, total_equity, datetime.utcnow().isoformat())
+                (balance, initial_balance, total_equity, datetime.now(timezone.utc).isoformat())
             )
             conn.commit()
         finally:
@@ -132,7 +132,7 @@ class Storage:
         try:
             cursor = conn.execute(
                 "INSERT INTO positions (side, entry_price, quantity, tp, sl, unrealized_pnl, timestamp) VALUES (?, ?, ?, ?, ?, 0.0, ?)",
-                (side, entry_price, quantity, tp, sl, datetime.utcnow().isoformat())
+                (side, entry_price, quantity, tp, sl, datetime.now(timezone.utc).isoformat())
             )
             conn.commit()
             return cursor.lastrowid
@@ -152,7 +152,7 @@ class Storage:
         try:
             conn.execute(
                 "INSERT INTO predictions (timestamp, score, signal, candles_used, model_loaded) VALUES (?, ?, ?, ?, ?)",
-                (datetime.utcnow().isoformat(), score, signal, candles_used, 1 if model_loaded else 0)
+                (datetime.now(timezone.utc).isoformat(), score, signal, candles_used, 1 if model_loaded else 0)
             )
             conn.commit()
         finally:
@@ -214,7 +214,7 @@ class Storage:
         try:
             conn.execute(
                 "INSERT INTO trades (side, entry_price, exit_price, quantity, pnl, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                (side, entry_price, exit_price, quantity, pnl, datetime.utcnow().isoformat())
+                (side, entry_price, exit_price, quantity, pnl, datetime.now(timezone.utc).isoformat())
             )
             conn.commit()
         finally:
@@ -246,7 +246,7 @@ class Storage:
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO license_cache (hwid, license_key, valid, expiry, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (hwid, license_key, 1 if valid else 0, expiry, datetime.utcnow().isoformat())
+                (hwid, license_key, 1 if valid else 0, expiry, datetime.now(timezone.utc).isoformat())
             )
             conn.commit()
         finally:
@@ -280,7 +280,7 @@ class Storage:
                         pos.get("quantity"),
                         pos.get("tp"),
                         pos.get("sl"),
-                        pos.get("timestamp", datetime.utcnow().isoformat()),
+                        pos.get("timestamp", datetime.now(timezone.utc).isoformat()),
                     )
                 )
             conn.commit()
@@ -299,7 +299,7 @@ class Storage:
                         trade.get("exit_price"),
                         trade.get("quantity"),
                         trade.get("pnl"),
-                        trade.get("timestamp", datetime.utcnow().isoformat()),
+                        trade.get("timestamp", datetime.now(timezone.utc).isoformat()),
                     )
                 )
             conn.commit()

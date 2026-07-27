@@ -78,7 +78,7 @@ def save_api_keys(api_key: str, api_secret: str, paper_mode: bool = True):
                 _encrypt(api_key, key) if api_key else None,
                 _encrypt(api_secret, key) if api_secret else None,
                 1 if paper_mode else 0,
-                __import__("datetime").datetime.utcnow().isoformat(),
+                __import__("datetime").datetime.now(__import__("datetime").datetime.timezone.utc).isoformat(),
             ),
         )
         conn.commit()

@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from collections import deque
 
@@ -221,7 +221,7 @@ async def websocket_market(websocket: WebSocket):
             data = await websocket.receive_text()
             message = json.loads(data)
             if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+                 await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:
         active_connections.remove(websocket)
         logger.info("WebSocket client disconnected")

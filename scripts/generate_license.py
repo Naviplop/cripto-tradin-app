@@ -8,7 +8,7 @@ import sys
 import uuid
 import platform
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def find_dotenv() -> str:
@@ -78,7 +78,7 @@ def get_hardware_id():
 
 def generate_license(days_valid: int = 365):
     hwid = get_hardware_id()
-    expiry = (datetime.utcnow() + timedelta(days=days_valid)).isoformat()
+    expiry = (datetime.now(timezone.utc) + timedelta(days=days_valid)).isoformat()
     message = f"{hwid}|{expiry}"
     sig = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).hexdigest()
     payload = {"hwid": hwid, "exp": expiry, "sig": sig}
