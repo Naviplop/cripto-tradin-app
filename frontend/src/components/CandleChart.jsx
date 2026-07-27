@@ -126,21 +126,33 @@ export default function CandleChart({
     if (!container || tool === 'none') return;
 
     const onMouseDown = (e) => {
+      if (!chartRef.current) return;
       const rect = container.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const price = chartRef.current?.priceScale('right')?.coordinateToPrice(y);
-      const time = chartRef.current?.timeScale()?.coordinateToTime(x);
-      drawingStartRef.current = { price: price || 0, time: time || 0 };
+      try {
+        const price = chartRef.current.priceScale('right').coordinateToPrice(y);
+        const time = chartRef.current.timeScale().coordinateToTime(x);
+        drawingStartRef.current = { price: price || 0, time: time || 0 };
+      } catch (err) {
+        drawingStartRef.current = null;
+      }
     };
 
     const onMouseUp = (e) => {
-      if (!drawingStartRef.current) return;
+      if (!drawingStartRef.current || !chartRef.current) return;
       const rect = container.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const endPrice = chartRef.current?.priceScale('right')?.coordinateToPrice(y);
-      const endTime = chartRef.current?.timeScale()?.coordinateToTime(x);
+      let endPrice = 0;
+      let endTime = 0;
+      try {
+        endPrice = chartRef.current.priceScale('right').coordinateToPrice(y);
+        endTime = chartRef.current.timeScale().coordinateToTime(x);
+      } catch (err) {
+        drawingStartRef.current = null;
+        return;
+      }
       const start = drawingStartRef.current;
 
       if (tool === 'trendline' && endPrice && endTime) {
