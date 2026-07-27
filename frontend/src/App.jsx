@@ -30,7 +30,6 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [ticker, setTicker] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [bootstrapError, setBootstrapError] = useState('');
@@ -63,50 +62,6 @@ export default function App() {
       clearTimeout(timeoutId);
     }
   }, []);
-
-  const connectWebSocket = useCallback(() => {
-    if (wsRef.current) wsRef.current.close();
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      setReconnectAttempt(0);
-      setError('');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'market_data') {
-          setCandleData(prev => {
-            const map = new Map();
-            for (const c of prev) map.set(typeof c.time === 'string' ? c.time : JSON.stringify(c.time), c);
-            const key = typeof msg.candle.time === 'string' ? msg.candle.time : JSON.stringify(msg.candle.time);
-            map.set(key, msg.candle);
-            const next = Array.from(map.values());
-            return next.slice(-500);
-          });
-          setSignals(msg.signals);
-        } else if (msg.type === 'account_update') {
-          setAccount(msg.data);
-        }
-      } catch (e) {
-        console.error('Failed to parse WebSocket message', e);
-      }
-    };
-
-    ws.onerror = () => {
-      setError('WebSocket connection error');
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      const delay = getReconnectDelay(reconnectAttempt);
-      setReconnectAttempt(prev => prev + 1);
-      setTimeout(connectWebSocket, delay);
-    };
-  }, [reconnectAttempt]);
 
   useEffect(() => {
     if (!splashComplete) return;
@@ -144,17 +99,70 @@ export default function App() {
   }, [splashComplete]);
 
   useEffect(() => {
-    if (isLicensed && !showOnboarding) {
-      const onboardingDone = typeof window !== 'undefined' ? localStorage.getItem('lafm_onboarding_complete') : null;
-      if (onboardingDone) {
-        connectWebSocket();
-        fetchAccount();
-        fetchPositions();
-        fetchHistory();
-        fetchTicker();
-        fetchCandles();
-      }
-    }
+    if (!isLicensed || showOnboarding) return;
+    
+    let cancelled = false;
+    let retryCount = 0;
+    
+    const connect = () => {
+      if (wsRef.current) wsRef.current.close();
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+      
+      ws.onopen = () => {
+        if (cancelled) return;
+        retryCount = 0;
+        setConnected(true);
+        setError('');
+      };
+      
+      ws.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'market_data') {
+            setCandleData(prev => {
+              const map = new Map();
+              for (const c of prev) map.set(typeof c.time === 'string' ? c.time : JSON.stringify(c.time), c);
+              const key = typeof msg.candle.time === 'string' ? msg.candle.time : JSON.stringify(msg.candle.time);
+              map.set(key, msg.candle);
+              const next = Array.from(map.values());
+              return next.slice(-500);
+            });
+            setSignals(msg.signals);
+          } else if (msg.type === 'account_update') {
+            setAccount(msg.data);
+          }
+        } catch (e) {
+          console.error('Failed to parse WebSocket message', e);
+        }
+      };
+      
+      ws.onerror = () => {
+        if (cancelled) return;
+        setError('WebSocket connection error');
+      };
+      
+      ws.onclose = () => {
+        if (cancelled) return;
+        setConnected(false);
+        const delay = getReconnectDelay(retryCount);
+        retryCount += 1;
+        setTimeout(connect, delay);
+      };
+    };
+    
+    connect();
+    fetchAccount();
+    fetchPositions();
+    fetchHistory();
+    fetchTicker();
+    fetchCandles();
+    
+    return () => {
+      cancelled = true;
+      if (wsRef.current) wsRef.current.close();
+    };
   }, [isLicensed, showOnboarding]);
 
   const fetchAccount = async () => {
@@ -271,12 +279,6 @@ export default function App() {
         }
         if (!localStorage.getItem('lafm_onboarding_complete')) {
           setShowOnboarding(true);
-        } else {
-          connectWebSocket();
-          fetchAccount();
-          fetchPositions();
-          fetchHistory();
-          fetchTicker();
         }
       } else {
         setError(data.message || 'Invalid license');
@@ -295,11 +297,6 @@ export default function App() {
       localStorage.setItem('lafm_onboarding_complete', 'true');
     }
     setShowOnboarding(false);
-    connectWebSocket();
-    fetchAccount();
-    fetchPositions();
-    fetchHistory();
-    fetchTicker();
   };
 
   if (!splashComplete) {
