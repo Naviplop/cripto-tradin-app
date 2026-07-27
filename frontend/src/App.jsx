@@ -21,6 +21,8 @@ const getReconnectDelay = (attempt) => {
 };
 
 export default function App() {
+  const [splashComplete, setSplashComplete] = useState(false);
+  const handleSplashComplete = useCallback(() => setSplashComplete(true), []);
   const [candleData, setCandleData] = useState([]);
   const [signals, setSignals] = useState(null);
   const [account, setAccount] = useState(null);
@@ -29,7 +31,6 @@ export default function App() {
   const [ticker, setTicker] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [splashComplete, setSplashComplete] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [bootstrapError, setBootstrapError] = useState('');
@@ -79,7 +80,11 @@ export default function App() {
         const msg = JSON.parse(event.data);
         if (msg.type === 'market_data') {
           setCandleData(prev => {
-            const next = [...prev, msg.candle];
+            const map = new Map();
+            for (const c of prev) map.set(typeof c.time === 'string' ? c.time : JSON.stringify(c.time), c);
+            const key = typeof msg.candle.time === 'string' ? msg.candle.time : JSON.stringify(msg.candle.time);
+            map.set(key, msg.candle);
+            const next = Array.from(map.values());
             return next.slice(-500);
           });
           setSignals(msg.signals);
@@ -147,18 +152,10 @@ export default function App() {
         fetchPositions();
         fetchHistory();
         fetchTicker();
+        fetchCandles();
       }
     }
   }, [isLicensed, showOnboarding]);
-
-  useEffect(() => {
-    if (!connected) return;
-    const ws = new WebSocket('ws://127.0.0.1:8765/ws/market');
-    ws.onopen = () => {};
-    ws.onerror = () => {};
-    ws.onclose = () => {};
-    return () => ws.close();
-  }, [connected]);
 
   const fetchAccount = async () => {
     try {
@@ -191,6 +188,31 @@ export default function App() {
     try {
       const data = await fetchWithTimeout(`${API_BASE}/api/market/ticker`);
       setTicker(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const fetchCandles = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/market/klines?limit=200`);
+      if (Array.isArray(data)) {
+        const seen = new Set();
+        const deduped = [];
+        for (const c of data) {
+          const t = typeof c.time === 'string' ? c.time : JSON.stringify(c.time);
+          if (!seen.has(t)) {
+            seen.add(t);
+            deduped.push(c);
+          }
+        }
+        deduped.sort((a, b) => {
+          const ta = typeof a.time === 'string' ? new Date(a.time).getTime() : a.time;
+          const tb = typeof b.time === 'string' ? new Date(b.time).getTime() : b.time;
+          return ta - tb;
+        });
+        setCandleData(deduped);
+      }
     } catch (e) {
       // silent
     }
@@ -281,7 +303,7 @@ export default function App() {
   };
 
   if (!splashComplete) {
-    return <SplashScreen onComplete={() => setSplashComplete(true)} />;
+    return <SplashScreen onComplete={handleSplashComplete} />;
   }
 
   if (isBootstrapping) {

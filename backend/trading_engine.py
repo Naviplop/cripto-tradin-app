@@ -129,7 +129,7 @@ class TradingEngine:
                     int(t.id.split("-")[1]) for t in self.trade_history
                 )
             logger.info(
-                "Loaded state: balance=%.2f, positions=%d, trades=%d",
+                "Loaded state: balance={:.2f}, positions={}, trades={}",
                 self.balance,
                 len(self.positions),
                 len(self.trade_history),
@@ -309,6 +309,8 @@ class TradingEngine:
             for c in self.candles
         ])
         df.set_index("time", inplace=True)
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
 
         df.ta.ema(length=10, append=True)
         df.ta.ema(length=30, append=True)
@@ -341,7 +343,10 @@ class TradingEngine:
             return self.signal_state, []
 
         latest = df.iloc[-1]
-        prev = df.iloc[-2]
+        if len(df) < 2:
+            prev = latest
+        else:
+            prev = df.iloc[-2]
         ma_fast = float(latest["ema_fast"])
         ma_slow = float(latest["ema_slow"])
         rsi = float(latest["rsi"])
@@ -384,9 +389,32 @@ class TradingEngine:
         state.setdefault("atr", 0.0)
         return state
 
+    def get_candles(self, limit: int = 200) -> List[Dict[str, Any]]:
+        seen = set()
+        unique = []
+        for c in list(self.candles):
+            key = c.timestamp.isoformat()
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+        return [
+            {
+                "time": c.timestamp.isoformat(),
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in unique[-limit:]
+        ]
+
     async def _process_tick(self, candle: Candle):
         self.current_price = candle.close
-        self.candles.append(candle)
+        if not self.candles or self.candles[-1].timestamp != candle.timestamp:
+            self.candles.append(candle)
+        else:
+            self.candles[-1] = candle
         self.update_positions()
         signals, enriched = self._generate_signals()
         ai_prob = self.ai_predictor.predict(enriched)

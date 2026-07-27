@@ -6,7 +6,8 @@ export default function OrderBookWidget({ symbol = 'BTCUSDT' }) {
   const [bids, setBids] = useState([]);
   const [asks, setAsks] = useState([]);
   const [spread, setSpread] = useState(null);
-  const wsRef = useRef(null);
+  const [error, setError] = useState(null);
+  const intervalRef = useRef(null);
 
   const fmt = useCallback((v) => {
     if (v == null || Number.isNaN(v)) return '0.00';
@@ -19,36 +20,50 @@ export default function OrderBookWidget({ symbol = 'BTCUSDT' }) {
   }, []);
 
   useEffect(() => {
-    const ws = new WebSocket('wss://stream.binance.com:9443/ws');
-    wsRef.current = ws;
+    const API_BASE = window._LAFM_API_BASE || 'http://127.0.0.1:8765';
+    let cancelled = false;
 
-    const sub = {
-      method: 'SUBSCRIBE',
-      params: [`${symbol.toLowerCase()}@depth@100ms`, `${symbol.toLowerCase()}@ticker`],
-      id: 1,
-    };
-
-    ws.onopen = () => ws.send(JSON.stringify(sub));
-    ws.onclose = () => {};
-    ws.onerror = () => {};
-
-    ws.onmessage = (event) => {
+    const load = async () => {
       try {
-        const msg = JSON.parse(event.data);
-        if (msg.e === 'depthUpdate') {
-          setBids(prev => mergeDepth(prev, msg.b, 'bid'));
-          setAsks(prev => mergeDepth(prev, msg.a, 'ask'));
-        } else if (msg.e === '24hrTicker' && msg.bestBidPrice && msg.bestAskPrice) {
-          const bestBid = parseFloat(msg.bestBidPrice);
-          const bestAsk = parseFloat(msg.bestAskPrice);
+        const [obRes, tickerRes] = await Promise.all([
+          fetch(`${API_BASE}/api/market/orderbook?limit=50`, { signal: new AbortController(5000).signal }),
+          fetch(`${API_BASE}/api/market/ticker`, { signal: new AbortController(5000).signal }),
+        ]);
+        if (!obRes.ok || !tickerRes.ok) throw new Error('Market data unavailable');
+        const ob = await obRes.json();
+        const ticker = await tickerRes.json();
+
+        const bidLevels = (ob.bids || []).slice(0, MAX_ROWS).map(([price, qty]) => ({
+          price: parseFloat(price),
+          qty: parseFloat(qty),
+          total: parseFloat(qty),
+        }));
+        const askLevels = (ob.asks || []).slice(0, MAX_ROWS).map(([price, qty]) => ({
+          price: parseFloat(price),
+          qty: parseFloat(qty),
+          total: parseFloat(qty),
+        }));
+
+        if (!cancelled) {
+          setBids(bidLevels);
+          setAsks(askLevels);
+          const bestBid = bidLevels[0]?.price || ticker.price || 0;
+          const bestAsk = askLevels[0]?.price || ticker.price || 0;
           setSpread(bestAsk - bestBid);
+          setError(null);
         }
       } catch (e) {
-        // ignore parse errors
+        if (!cancelled) setError('Order book unavailable');
       }
     };
 
-    return () => ws.close();
+    load();
+    intervalRef.current = setInterval(load, 1000);
+
+    return () => {
+      cancelled = true;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [symbol]);
 
   const renderRows = (book, type) => {
@@ -77,13 +92,15 @@ export default function OrderBookWidget({ symbol = 'BTCUSDT' }) {
     });
   };
 
-  if (!spread) return null;
+  if (error) return null;
 
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-lg h-full flex flex-col overflow-hidden">
       <div className="px-3 py-2 border-b border-slate-700 flex items-center justify-between">
         <span className="text-xs font-semibold text-slate-200">Order Book</span>
-        <span className="text-[10px] text-slate-400">Spread: {fmt(spread)} USDT</span>
+        <span className="text-[10px] text-slate-400">
+          {spread != null ? `Spread: ${fmt(spread)} USDT` : 'Live'}
+        </span>
       </div>
       <div className="grid grid-cols-2 divide-x divide-slate-700 flex-1 min-h-0">
         <div className="flex flex-col">
@@ -105,21 +122,4 @@ export default function OrderBookWidget({ symbol = 'BTCUSDT' }) {
       </div>
     </div>
   );
-}
-
-function mergeDepth(prev, levels, side) {
-  const map = new Map();
-  for (const l of prev) map.set(l.price, l);
-
-  for (const l of levels) {
-    const price = parseFloat(l[0]);
-    const qty = parseFloat(l[1]);
-    if (qty === 0) map.delete(price);
-    else {
-      const existing = map.get(price);
-      const total = existing ? existing.total + qty : qty;
-      map.set(price, { price, qty, total: Number.parseFloat(total.toFixed(4)) });
-    }
-  }
-  return Array.from(map.values());
 }

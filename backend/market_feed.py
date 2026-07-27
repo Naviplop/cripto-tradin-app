@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
 
 import websockets
@@ -69,7 +69,7 @@ class BinanceMarketFeed:
             except Exception as e:
                 self._consecutive_errors += 1
                 logger.error(
-                    "WebSocket error (%d consecutive): %s",
+                    "WebSocket error ({} consecutive): {}",
                     self._consecutive_errors,
                     e,
                 )
@@ -84,13 +84,13 @@ class BinanceMarketFeed:
                     RECONNECT_DELAY_BASE * (2 ** (self._consecutive_errors - 1)),
                     RECONNECT_DELAY_MAX,
                 )
-                logger.info("Reconnecting in %d seconds...", delay)
+                logger.info("Reconnecting in {} seconds...", delay)
                 await asyncio.sleep(delay)
 
     async def _connect_and_listen(self):
         stream_name = f"{self.symbol}@kline_{self.timeframe}"
         ws_url = f"wss://stream.binance.com:9443/ws/{stream_name}"
-        logger.info("Connecting to Binance WebSocket: %s", ws_url)
+        logger.info("Connecting to Binance WebSocket: {}", ws_url)
 
         async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
             self._consecutive_errors = 0
@@ -119,7 +119,7 @@ class BinanceMarketFeed:
                     self._last_real_candle_time = str(kline_start)
 
                     candle = Candle(
-                        timestamp=datetime.utcfromtimestamp(kline_start / 1000),
+                        timestamp=datetime.fromtimestamp(kline_start / 1000, tz=timezone.utc),
                         open=float(kline.get("o", 0)),
                         high=float(kline.get("h", 0)),
                         low=float(kline.get("l", 0)),
@@ -145,7 +145,7 @@ class BinanceMarketFeed:
             rows = resp.json()
             for r in rows:
                 candle = Candle(
-                    timestamp=datetime.utcfromtimestamp(r[0] / 1000),
+                    timestamp=datetime.fromtimestamp(r[0] / 1000, tz=timezone.utc),
                     open=float(r[1]),
                     high=float(r[2]),
                     low=float(r[3]),
@@ -153,9 +153,9 @@ class BinanceMarketFeed:
                     volume=float(r[5]),
                 )
                 await self.on_candle(candle)
-            logger.info("Cold start: loaded %d historical candles", len(rows))
+            logger.info("Cold start: loaded {} historical candles", len(rows))
         except Exception as exc:
-            logger.warning("Cold start failed (%s). Proceeding with empty buffer.", exc)
+            logger.warning("Cold start failed ({}). Proceeding with empty buffer.", exc)
 
     def _start_simulation_fallback(self):
         if self._sim_task and not self._sim_task.done():
@@ -191,7 +191,8 @@ class BinanceMarketFeed:
             try:
                 await self.on_candle(candle)
             except Exception as e:
-                logger.error("Simulation fallback candle error: %s", e)
+                import traceback
+                logger.error("Simulation fallback candle error: {}\n{}", e, traceback.format_exc())
 
         while self.running:
             await asyncio.sleep(60)
@@ -210,11 +211,11 @@ class BinanceMarketFeed:
                 close=new_close,
                 volume=new_volume,
             )
-            current_price = new_close
             try:
                 await self.on_candle(candle)
             except Exception as e:
-                logger.error("Simulation fallback candle error: %s", e)
+                import traceback
+                logger.error("Simulation fallback candle error2: {}\n{}", e, traceback.format_exc())
 
     @property
     def is_using_simulation(self) -> bool:

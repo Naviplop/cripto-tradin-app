@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts';
+import { createChart, ColorType } from 'lightweight-charts';
 
-type Tool = 'none' | 'trendline' | 'fibonacci' | 'support_resistance';
+const TOOLS = ['none', 'trendline', 'support_resistance'];
 
 export default function CandleChart({
   data,
@@ -11,24 +11,21 @@ export default function CandleChart({
   onOrderSubmit,
   onCancelOrders,
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const containerRef = useRef(null);
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
   const prevDataLengthRef = useRef(0);
-  const [tool, setTool] = useState<Tool>('none');
+  const [tool, setTool] = useState('none');
   const [paused, setPaused] = useState(false);
-  const [drawnItems, setDrawnItems] = useState([]);
-  const drawingStartRef = useRef<{ price: number; time: Time } | null>(null);
+  const drawingStartRef = useRef(null);
 
-  const formatTime = useCallback((timeInput: string | number | Date) => {
+  const formatTime = useCallback((timeInput) => {
     const d = new Date(timeInput);
-    return {
-      year: d.getFullYear(),
-      month: d.getMonth() + 1,
-      day: d.getDate(),
-      hour: d.getHours(),
-      minute: d.getMinutes(),
-    };
+    const ms = d.getTime();
+    if (!Number.isFinite(ms)) {
+      return 0;
+    }
+    return Math.floor(ms / 1000);
   }, []);
 
   useEffect(() => {
@@ -84,9 +81,8 @@ export default function CandleChart({
     };
   }, []);
 
-  // Hotkeys
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
+    const handler = (event) => {
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement
@@ -113,7 +109,7 @@ export default function CandleChart({
         onCancelOrders?.();
       } else if (key === ' ') {
         event.preventDefault();
-        setPaused(prev => {
+        setPaused((prev) => {
           const next = !prev;
           onPauseToggle?.(next);
           return next;
@@ -125,12 +121,11 @@ export default function CandleChart({
     return () => window.removeEventListener('keydown', handler);
   }, [onOrderSubmit, onCancelOrders, onPauseToggle]);
 
-  // Drawing tools
   useEffect(() => {
     const container = containerRef.current;
     if (!container || tool === 'none') return;
 
-    const onMouseDown = (e: MouseEvent) => {
+    const onMouseDown = (e) => {
       const rect = container.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -139,7 +134,7 @@ export default function CandleChart({
       drawingStartRef.current = { price: price || 0, time: time || 0 };
     };
 
-    const onMouseUp = (e: MouseEvent) => {
+    const onMouseUp = (e) => {
       if (!drawingStartRef.current) return;
       const rect = container.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -148,27 +143,25 @@ export default function CandleChart({
       const endTime = chartRef.current?.timeScale()?.coordinateToTime(x);
       const start = drawingStartRef.current;
 
-      setDrawnItems(prev => {
-        const next = [...prev];
-        if (tool === 'trendline' && endPrice && endTime) {
-          next.push({
-            type: 'line',
-            start: { price: start.price, time: start.time },
-            end: { price: endPrice, time: endTime },
-          });
-        } else if (
-          tool === 'support_resistance'
-          && endPrice
-          && endTime
-        ) {
-          next.push({
-            type: 'rect',
-            start: { price: start.price, time: start.time },
-            end: { price: endPrice, time: endTime },
-          });
-        }
-        return next;
-      });
+      if (tool === 'trendline' && endPrice && endTime) {
+        chartRef.current?.createShape({
+          points: [
+            { time: start.time, price: start.price },
+            { time: endTime, price: endPrice },
+          ],
+          shape: 'line',
+          style: { stroke: '#facc15', width: 1.5, extendLeft: false, extendRight: false },
+        });
+      } else if (tool === 'support_resistance' && endPrice && endTime) {
+        chartRef.current?.createShape({
+          points: [
+            { time: start.time, price: start.price },
+            { time: endTime, price: endPrice },
+          ],
+          shape: 'rectangle',
+          style: { fill: 'rgba(250,204,21,0.08)', stroke: '#facc15', width: 1 },
+        });
+      }
       drawingStartRef.current = null;
     };
 
@@ -183,17 +176,35 @@ export default function CandleChart({
   useEffect(() => {
     if (!seriesRef.current || !data || data.length === 0) return;
     const isAppend = !paused && data.length > prevDataLengthRef.current;
-    const formatted: CandlestickData[] = data.map(d => ({
-      time: formatTime(d.time) as Time,
-      open: d.open,
-      high: d.high,
-      low: d.low,
-      close: d.close,
-    }));
-    if (isAppend && formatted.length > 0) {
-      seriesRef.current.update(formatted[formatted.length - 1]);
-    } else {
+
+    const seen = new Set();
+    const unique = [];
+    for (const d of data) {
+      const ts = formatTime(d.time);
+      if (ts <= 0) continue;
+      if (!seen.has(ts)) {
+        seen.add(ts);
+        unique.push(d);
+      }
+    }
+
+    unique.sort((a, b) => formatTime(a.time) - formatTime(b.time));
+
+    const formatted = unique.map((d) => {
+      const ts = formatTime(d.time);
+      return {
+        time: ts,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      };
+    });
+
+    if (formatted.length === 1 || !isAppend) {
       seriesRef.current.setData(formatted);
+    } else {
+      seriesRef.current.update(formatted[formatted.length - 1]);
     }
     prevDataLengthRef.current = data.length;
   }, [data, paused, formatTime]);
@@ -209,12 +220,12 @@ export default function CandleChart({
     }
   }, [signals, data]);
 
-  const timeframes = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'] as const;
+  const timeframes = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
 
   return (
     <>
       <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-slate-900/70 backdrop-blur-sm rounded-lg border border-slate-700 p-1">
-        {timeframes.map(tf => (
+        {timeframes.map((tf) => (
           <button
             key={tf}
             onClick={() => onTimeframeChange?.(tf)}
@@ -244,7 +255,7 @@ export default function CandleChart({
           S/R Zone
         </button>
         <button
-          onClick={() => setPaused(p => !p)}
+          onClick={() => setPaused((p) => !p)}
           className={`text-[10px] font-mono px-2 py-1 rounded hover:bg-slate-800 transition-colors ${paused ? 'bg-red-700 text-white' : 'text-slate-300 hover:text-white'}`}
         >
           {paused ? 'Resume' : 'Pause'}
@@ -257,6 +268,6 @@ export default function CandleChart({
   );
 }
 
-function suggestedQuantity(): number {
+function suggestedQuantity() {
   return 0.001;
 }

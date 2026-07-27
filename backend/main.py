@@ -58,6 +58,16 @@ def get_base_path() -> str:
 
 BASE_PATH = get_base_path()
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
+EXTRA_CORS_ORIGINS = [origin.strip() for origin in os.environ.get("EXTRA_CORS_ORIGINS", "").split(",") if origin.strip()]
+DEV_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+CORS_ORIGINS = list({FRONTEND_ORIGIN, *DEV_ORIGINS, *EXTRA_CORS_ORIGINS})
 
 trading_engine = TradingEngine(initial_balance=10000.0)
 license_manager = LicenseManager()
@@ -69,7 +79,7 @@ app.state.limiter = limiter
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN, "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -137,6 +147,11 @@ async def market_orderbook(limit: int = 50):
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+
+@app.get("/api/market/klines")
+async def market_klines(limit: int = 200):
+    return trading_engine.get_candles(limit=limit)
 
 
 @app.get("/api/health")
