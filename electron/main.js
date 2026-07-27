@@ -4,6 +4,32 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 
+function loadDotenv() {
+  const candidates = [
+    path.join(__dirname, '..', 'backend', '.env'),
+    path.join(__dirname, '..', '.env'),
+    path.join(process.resourcesPath, '.env'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      const content = fs.readFileSync(candidate, 'utf-8');
+      for (const line of content.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq === -1) continue;
+        const key = trimmed.slice(0, eq).trim();
+        const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+        if (key && !(key in process.env)) {
+          process.env[key] = value;
+        }
+      }
+      break;
+    }
+  }
+}
+loadDotenv();
+
 autoUpdater.checkForUpdatesAndNotify();
 autoUpdater.setFeedURL({
   provider: 'github',
@@ -55,6 +81,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: false,
     },
     title: 'Crypto Trading Terminal - LAFM',
     backgroundColor: '#0f172a',
@@ -87,6 +114,7 @@ function startBackend() {
 
   backendProcess = spawn(command, args, {
     cwd,
+    env: process.env,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -8,7 +8,27 @@ from collections import deque
 
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+def load_env() -> None:
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"),
+    ]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.extend(
+            [
+                os.path.join(sys._MEIPASS, ".env"),
+                os.path.join(sys._MEIPASS, "..", ".env"),
+                os.path.join(os.path.dirname(sys.executable), ".env"),
+            ]
+        )
+    for path in candidates:
+        if os.path.isfile(path):
+            load_dotenv(path, override=False)
+            break
+
+
+load_env()
 
 import pandas as pd
 import pandas_ta as ta

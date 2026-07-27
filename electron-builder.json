@@ -7,14 +7,20 @@
   },
   "files": [
     "electron/**/*",
-    "frontend/dist/**/*"
+    "frontend/dist/**/*",
+    "assets/**/*"
   ],
   "extraResources": [
     {
       "from": "backend/dist/trading_app.exe",
       "to": "trading_app.exe"
+    },
+    {
+      "from": "backend/.env",
+      "to": ".env"
     }
   ],
+  "asar": false,
   "win": {
     "target": "nsis",
     "icon": "assets/icon.png",

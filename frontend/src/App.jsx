@@ -3,6 +3,7 @@ import Chart from './components/Chart';
 import TradingPanel from './components/TradingPanel';
 import Onboarding from './components/Onboarding';
 import SplashScreen from './components/SplashScreen';
+import { useAppStore } from './store';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8765';
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8765/ws/market';
@@ -17,21 +18,27 @@ const getReconnectDelay = (attempt) => {
 };
 
 export default function App() {
-  const [licenseKey, setLicenseKey] = useState('');
-  const [licenseValid, setLicenseValid] = useState(false);
-  const [isLicensed, setIsLicensed] = useState(false);
   const [candleData, setCandleData] = useState([]);
   const [signals, setSignals] = useState(null);
   const [account, setAccount] = useState(null);
   const [positions, setPositions] = useState([]);
   const [history, setHistory] = useState([]);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [splashComplete, setSplashComplete] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [localLicenseKey, setLocalLicenseKey] = useState(() => localStorage.getItem('lafm_license_key') || '');
   const wsRef = useRef(null);
+
+  const store = useAppStore();
+  const {
+    licenseKey, setLicenseKey,
+    licenseValid, setLicenseValid,
+    isLicensed, setIsLicensed,
+    showOnboarding, setShowOnboarding,
+    connected, setConnected,
+    error, setError,
+  } = store;
 
   const fetchWithTimeout = useCallback(async (url, options = {}, timeout = REQUEST_TIMEOUT) => {
     const controller = new AbortController();
@@ -92,10 +99,16 @@ export default function App() {
   }, [reconnectAttempt]);
 
   useEffect(() => {
-    fetchAccount();
-    const interval = setInterval(fetchAccount, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    if (isLicensed && !showOnboarding) {
+      const onboardingDone = typeof window !== 'undefined' ? localStorage.getItem('lafm_onboarding_complete') : null;
+      if (onboardingDone) {
+        connectWebSocket();
+        fetchAccount();
+        fetchPositions();
+        fetchHistory();
+      }
+    }
+  }, [isLicensed, showOnboarding]);
 
   const validateLicense = async () => {
     setLoading(true);
@@ -109,8 +122,10 @@ export default function App() {
       if (data.valid) {
         setLicenseValid(true);
         setIsLicensed(true);
-        const onboardingDone = localStorage.getItem('lafm_onboarding_complete');
-        if (!onboardingDone) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('lafm_license_key', licenseKey);
+        }
+        if (!localStorage.getItem('lafm_onboarding_complete')) {
           setShowOnboarding(true);
         } else {
           connectWebSocket();
@@ -133,7 +148,9 @@ export default function App() {
   };
 
   const handleOnboardingComplete = () => {
-    localStorage.setItem('lafm_onboarding_complete', 'true');
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('lafm_onboarding_complete', 'true');
+    }
     setShowOnboarding(false);
     connectWebSocket();
     fetchAccount();
@@ -227,35 +244,55 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <header className="bg-slate-900 border-b border-slate-700 px-6 py-3 flex items-center justify-between">
+      <header className="bg-slate-900 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-slate-100">Crypto Trading Terminal</h1>
+          <button
+            className="md:hidden text-slate-300 hover:text-white"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <h1 className="text-lg sm:text-xl font-bold text-slate-100">Crypto Trading Terminal</h1>
           <span className="flex items-center gap-1.5 text-xs">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-            <span className="text-slate-400">{connected ? 'Connected' : 'Disconnected'}</span>
+            <span className="text-slate-400 hidden sm:inline">{connected ? 'Connected' : 'Disconnected'}</span>
           </span>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm">
           <span className="text-slate-400">BTC/USDT</span>
           <span className="font-mono text-slate-200">{candleData.length > 0 ? Number(candleData[candleData.length - 1]?.close).toFixed(2) : '---'}</span>
         </div>
       </header>
 
       {error && (
-        <div className="mx-6 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
+        <div className="mx-4 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex h-[calc(100vh-60px)]">
-        <div className="flex-1 p-4">
+      <div className="flex h-[calc(100vh-60px)] relative">
+        <div className={`fixed inset-0 bg-black/50 z-20 md:hidden ${sidebarOpen ? 'block' : 'hidden'}`} onClick={() => setSidebarOpen(false)} />
+        <aside className={`fixed md:static inset-y-0 left-0 z-30 w-80 bg-slate-900 border-r border-slate-700 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col`}>
+          <div className="p-4 border-b border-slate-700 flex items-center justify-between md:hidden">
+            <span className="text-slate-200 font-semibold">Menu</span>
+            <button onClick={() => setSidebarOpen(false)} className="text-slate-400 hover:text-white">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <TradingPanel account={account} onOrderSubmit={handleOrderSubmit} />
+          </div>
+        </aside>
+        <main className="flex-1 p-4 overflow-hidden">
           <div className="h-full relative">
             <Chart data={candleData} signals={signals} />
           </div>
-        </div>
-        <div className="w-80 p-4 border-l border-slate-700">
-          <TradingPanel account={account} onOrderSubmit={handleOrderSubmit} />
-        </div>
+        </main>
       </div>
     </div>
   );
