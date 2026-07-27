@@ -32,6 +32,7 @@ load_env()
 
 import pandas as pd
 import pandas_ta as ta
+import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -102,11 +103,40 @@ class OrderRequest(BaseModel):
     price: Optional[float] = None
     tp: Optional[float] = None
     sl: Optional[float] = None
+    stop_price: Optional[float] = None
+    limit_price: Optional[float] = None
 
 
 class ModelUpdateRequest(BaseModel):
     download_url: str
     version: Optional[str] = None
+
+
+@app.get("/api/market/ticker")
+async def market_ticker():
+    symbol = os.environ.get("SYMBOL", "BTCUSDT")
+    url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    return {
+        "symbol": data.get("symbol"),
+        "price": float(data.get("lastPrice", 0)),
+        "priceChangePercent": float(data.get("priceChangePercent", 0)),
+        "high": float(data.get("highPrice", 0)),
+        "low": float(data.get("lowPrice", 0)),
+        "volume": float(data.get("volume", 0)),
+        "quoteVolume": float(data.get("quoteVolume", 0)),
+    }
+
+
+@app.get("/api/market/orderbook")
+async def market_orderbook(limit: int = 50):
+    symbol = os.environ.get("SYMBOL", "BTCUSDT")
+    url = f"https://api.binance.com/api/v3/depth?symbol={symbol}&limit={limit}"
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
 
 
 @app.get("/api/health")
@@ -151,6 +181,8 @@ async def place_order(request: OrderRequest):
             price=request.price,
             tp=request.tp,
             sl=request.sl,
+            stop_price=request.stop_price,
+            limit_price=request.limit_price,
         )
         return {"success": True, "order": order}
     except ValueError as e:

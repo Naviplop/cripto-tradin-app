@@ -21,6 +21,8 @@ class OrderSide(Enum):
 class OrderType(Enum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
+    STOP_LIMIT = "STOP_LIMIT"
+    OCO = "OCO"
 
 @dataclass
 class Candle:
@@ -79,7 +81,14 @@ class TradingEngine:
         self.order_counter = 0
         self.trade_counter = 0
         self.current_price = 0.0
-        self.signal_state = {"ma_fast": 0, "ma_slow": 0, "rsi": 50, "signal": "NEUTRAL"}
+        self.signal_state = {
+            "ma_fast": 0,
+            "ma_slow": 0,
+            "rsi": 50,
+            "signal": "NEUTRAL",
+            "current_price": 0.0,
+            "atr": 0.0,
+        }
         self._storage = get_storage() if db_path is None else Storage(db_path)
         self._load_state()
         self.ai_predictor = AIPredictor()
@@ -172,11 +181,16 @@ class TradingEngine:
 
     def place_order(self, side: OrderSide, order_type: OrderType, quantity: float,
                     price: Optional[float] = None, tp: Optional[float] = None,
-                    sl: Optional[float] = None) -> Dict[str, Any]:
+                    sl: Optional[float] = None, stop_price: Optional[float] = None,
+                    limit_price: Optional[float] = None) -> Dict[str, Any]:
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
         if order_type == OrderType.LIMIT and price is None:
             raise ValueError("Limit orders require a price")
+        if order_type == OrderType.STOP_LIMIT and (stop_price is None or limit_price is None):
+            raise ValueError("Stop-Limit orders require stop_price and limit_price")
+        if order_type == OrderType.OCO and (price is None or limit_price is None):
+            raise ValueError("OCO orders require a price and limit_price")
 
         self.order_counter += 1
         order = Order(
@@ -184,7 +198,7 @@ class TradingEngine:
             side=side,
             order_type=order_type,
             quantity=quantity,
-            price=price,
+            price=price or limit_price,
             tp=tp,
             sl=sl,
         )
@@ -209,8 +223,15 @@ class TradingEngine:
                 sl=position.sl,
             )
             logger.info(f"Market order filled: {order.id} at {self.current_price}")
-        else:
+        elif order_type == OrderType.LIMIT:
+            order.status = "PENDING"
             logger.info(f"Limit order placed: {order.id} at {price}")
+        elif order_type == OrderType.STOP_LIMIT:
+            order.status = "PENDING"
+            logger.info(f"Stop-Limit order placed: {order.id} stop={stop_price} limit={limit_price}")
+        elif order_type == OrderType.OCO:
+            order.status = "PENDING"
+            logger.info(f"OCO order placed: {order.id} price={price} limit={limit_price}")
 
         self._notify_account()
         return {
@@ -222,6 +243,8 @@ class TradingEngine:
             "price": order.filled_price or order.price,
             "tp": order.tp,
             "sl": order.sl,
+            "stop_price": stop_price,
+            "limit_price": limit_price,
         }
 
     def close_position(self, position: Position):
@@ -356,7 +379,10 @@ class TradingEngine:
         return self.signal_state, enriched
 
     def get_current_signals(self) -> Dict[str, Any]:
-        return self.signal_state
+        state = dict(self.signal_state)
+        state.setdefault("current_price", self.current_price)
+        state.setdefault("atr", 0.0)
+        return state
 
     async def _process_tick(self, candle: Candle):
         self.current_price = candle.close
@@ -367,6 +393,9 @@ class TradingEngine:
         combined = self._combine_signal_with_ai(signals.get("signal", "NEUTRAL"), ai_prob)
         signals["ai_probability"] = round(ai_prob, 4)
         signals["combined_signal"] = combined
+        signals["current_price"] = self.current_price
+        latest = enriched[-1] if enriched else {}
+        signals["atr"] = latest.get("atr", 0.0)
 
         if enriched:
             self._storage.save_prediction(

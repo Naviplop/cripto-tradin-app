@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 const PAIRS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
 
-export default function HeaderBar({ account, connected }) {
+export default function HeaderBar({ account, connected, ticker }) {
   const [pair, setPair] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1m');
   const [latency, setLatency] = useState(null);
@@ -19,20 +19,17 @@ export default function HeaderBar({ account, connected }) {
     return () => ws.close();
   }, [connected]);
 
-  const changePair = useCallback((next) => {
-    setPair(next);
-  }, []);
+  const changePair = useCallback((next) => setPair(next), []);
+  const changeTimeframe = useCallback((next) => setTimeframe(next), []);
+  const toggleMode = useCallback(() => setMode(prev => prev === 'PAPER' ? 'LIVE' : 'PAPER'), []);
 
-  const changeTimeframe = useCallback((next) => {
-    setTimeframe(next);
-  }, []);
-
-  const toggleMode = useCallback(() => {
-    setMode(prev => prev === 'PAPER' ? 'LIVE' : 'PAPER');
-  }, []);
+  const price = ticker?.price ?? 0;
+  const change24h = ticker?.priceChangePercent ?? 0;
+  const high24h = ticker?.high ?? 0;
+  const low24h = ticker?.low ?? 0;
+  const volume24h = ticker?.volume ?? 0;
 
   const equity = account?.total_equity ?? 0;
-  const balance = account?.balance ?? 0;
   const unrealized = account?.unrealized_pnl ?? 0;
   const positionsCount = account?.positions_count ?? 0;
 
@@ -57,7 +54,24 @@ export default function HeaderBar({ account, connected }) {
       </div>
       <div className="flex items-center gap-4 text-xs">
         <div className="hidden md:flex items-center gap-3">
-          <div className="text-slate-400">Equity <span className="text-slate-200 font-mono">${equity.toFixed(2)}</span></div>
+          <div className="text-slate-400">
+            Price <span className="text-slate-200 font-mono">{price ? `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}</span>
+          </div>
+          <div className={`font-mono ${change24h >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            24h {change24h >= 0 ? '+' : ''}{change24h?.toFixed(2)}%
+          </div>
+          <div className="text-slate-400">
+            H <span className="text-slate-200 font-mono">{high24h ? `$${high24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}</span>
+          </div>
+          <div className="text-slate-400">
+            L <span className="text-slate-200 font-mono">{low24h ? `$${low24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}</span>
+          </div>
+          <div className="text-slate-400">
+            Vol <span className="text-slate-200 font-mono">{volume24h ? `${(volume24h / 1000).toFixed(1)}K` : '--'}</span>
+          </div>
+          <div className="text-slate-400">
+            Equity <span className="text-slate-200 font-mono">${equity.toFixed(2)}</span>
+          </div>
           <div className={`font-mono ${unrealized >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
             PnL {unrealized >= 0 ? '+' : ''}{unrealized.toFixed(2)} USDT
           </div>

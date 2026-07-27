@@ -5,6 +5,7 @@ import Onboarding from './components/Onboarding';
 import SplashScreen from './components/SplashScreen';
 import HeaderBar from './components/HeaderBar';
 import AlertsToast from './components/AlertsToast';
+import OrderBookWidget from './components/OrderBookWidget';
 import { useAppStore } from './store';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8765';
@@ -25,6 +26,7 @@ export default function App() {
   const [account, setAccount] = useState(null);
   const [positions, setPositions] = useState([]);
   const [history, setHistory] = useState([]);
+  const [ticker, setTicker] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [splashComplete, setSplashComplete] = useState(false);
@@ -144,9 +146,89 @@ export default function App() {
         fetchAccount();
         fetchPositions();
         fetchHistory();
+        fetchTicker();
       }
     }
   }, [isLicensed, showOnboarding]);
+
+  useEffect(() => {
+    if (!connected) return;
+    const ws = new WebSocket('ws://127.0.0.1:8765/ws/market');
+    ws.onopen = () => {};
+    ws.onerror = () => {};
+    ws.onclose = () => {};
+    return () => ws.close();
+  }, [connected]);
+
+  const fetchAccount = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/balance`);
+      setAccount(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const fetchPositions = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/positions`);
+      setPositions(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/account/history`);
+      setHistory(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const fetchTicker = async () => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/market/ticker`);
+      setTicker(data);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const handleOrderSubmit = async (order) => {
+    try {
+      const data = await fetchWithTimeout(`${API_BASE}/api/trading/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(order),
+      });
+      if (data.success) {
+        fetchPositions();
+        fetchAccount();
+        setError('');
+      } else {
+        setError(data.detail || 'Order failed');
+      }
+    } catch (e) {
+      let message = 'Failed to place order';
+      if (e.name === 'AbortError') message = 'Order request timed out.';
+      setError(message);
+    }
+  };
+
+  const handleTimeframeChange = (tf) => {
+    // In a real implementation, send a WS message to change subscription
+    console.log('Timeframe change requested:', tf);
+  };
+
+  const handlePauseToggle = (paused) => {
+    console.log('Pause toggled:', paused);
+  };
+
+  const handleCancelOrders = () => {
+    console.log('Cancel orders requested');
+  };
 
   const validateLicense = async () => {
     setLoading(true);
@@ -172,6 +254,7 @@ export default function App() {
           fetchAccount();
           fetchPositions();
           fetchHistory();
+          fetchTicker();
         }
       } else {
         setError(data.message || 'Invalid license');
@@ -194,54 +277,7 @@ export default function App() {
     fetchAccount();
     fetchPositions();
     fetchHistory();
-  };
-
-  const fetchAccount = async () => {
-    try {
-      const data = await fetchWithTimeout(`${API_BASE}/api/account/balance`);
-      setAccount(data);
-    } catch (e) {
-      // silent background polls
-    }
-  };
-
-  const fetchPositions = async () => {
-    try {
-      const data = await fetchWithTimeout(`${API_BASE}/api/account/positions`);
-      setPositions(data);
-    } catch (e) {
-      // silent
-    }
-  };
-
-  const fetchHistory = async () => {
-    try {
-      const data = await fetchWithTimeout(`${API_BASE}/api/account/history`);
-      setHistory(data);
-    } catch (e) {
-      // silent
-    }
-  };
-
-  const handleOrderSubmit = async (order) => {
-    try {
-      const data = await fetchWithTimeout(`${API_BASE}/api/trading/order`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(order),
-      });
-      if (data.success) {
-        fetchPositions();
-        fetchAccount();
-        setError('');
-      } else {
-        setError(data.detail || 'Order failed');
-      }
-    } catch (e) {
-      let message = 'Failed to place order';
-      if (e.name === 'AbortError') message = 'Order request timed out.';
-      setError(message);
-    }
+    fetchTicker();
   };
 
   if (!splashComplete) {
@@ -297,7 +333,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <HeaderBar account={account} connected={connected} />
+      <HeaderBar account={account} connected={connected} ticker={ticker} />
       {error && (
         <div className="mx-4 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
           {error}
@@ -315,13 +351,21 @@ export default function App() {
               </svg>
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            <TradingPanel account={account} onOrderSubmit={handleOrderSubmit} />
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <TradingPanel account={account} onOrderSubmit={handleOrderSubmit} signals={signals} />
+            <OrderBookWidget />
           </div>
         </aside>
         <main className="flex-1 p-4 overflow-hidden">
           <div className="h-full relative">
-            <Chart data={candleData} signals={signals} />
+            <Chart
+              data={candleData}
+              signals={signals}
+              onTimeframeChange={handleTimeframeChange}
+              onPauseToggle={handlePauseToggle}
+              onOrderSubmit={handleOrderSubmit}
+              onCancelOrders={handleCancelOrders}
+            />
           </div>
         </main>
       </div>

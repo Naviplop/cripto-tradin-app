@@ -49,6 +49,15 @@ def _decrypt(data: bytes, key: bytes) -> Optional[str]:
         return None
 
 
+def _zeroize(value: Optional[str]) -> None:
+    if not value:
+        return
+    buf = bytearray(value, "utf-8")
+    for i in range(len(buf)):
+        buf[i] = 0
+    del buf
+
+
 def _get_connection():
     os.makedirs(SECURE_DB_DIR, exist_ok=True)
     conn = sqlite3.connect(SECURE_DB_PATH)
@@ -96,11 +105,14 @@ def load_api_keys() -> Optional[dict]:
             return None
         api_key = _decrypt(row["api_key_enc"], key) if row["api_key_enc"] else None
         api_secret = _decrypt(row["api_secret_enc"], key) if row["api_secret_enc"] else None
-        return {
+        result = {
             "api_key": api_key,
             "api_secret": api_secret,
             "paper_mode": bool(row["paper_mode"]),
         }
+        _zeroize(api_key)
+        _zeroize(api_secret)
+        return result
     finally:
         conn.close()
 

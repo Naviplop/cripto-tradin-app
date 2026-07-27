@@ -81,7 +81,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false,
+      webSecurity: true,
     },
     title: 'Crypto Trading Terminal - LAFM',
     backgroundColor: '#0f172a',
@@ -91,6 +91,20 @@ function createWindow() {
   if (fs.existsSync(iconPath)) {
     mainWindow.setIcon(iconPath);
   }
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed = ['http://localhost:3000', 'http://127.0.0.1:5173', 'http://localhost:5173'];
+    const isFile = url.startsWith('file://');
+    const isDev = !app.isPackaged;
+    const devOk = isDev && allowed.some(origin => url.startsWith(origin));
+    if (!devOk && !isFile) {
+      event.preventDefault();
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' };
+  });
 
   const isDev = !app.isPackaged;
   if (isDev) {
