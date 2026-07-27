@@ -1,8 +1,8 @@
 # LAFM Crypto Trading Terminal
 ## Product Overview & Commercial Presentation
 
-**Version:** 1.0.0  
-**Date:** 2026-07-24  
+**Version:** 1.0.1  
+**Date:** 2026-07-27  
 **Company:** LAFM  
 **Website:** [configure]  
 **Contact:** [configure]
@@ -11,13 +11,16 @@
 
 ## Executive Summary
 
-LAFM Crypto Trading Terminal is a **production-grade, desktop-native algorithmic trading workstation** for Binance BTC/USDT. It combines institutional-style technical analysis with local Edge AI inference, wrapped in a polished Electron desktop experience.
+LAFM Crypto Trading Terminal is a **production-grade, desktop-native algorithmic trading workstation** for Binance. It combines institutional-style technical analysis with local Edge AI inference, wrapped in a polished Electron desktop experience.
 
 Unlike cloud-based bots, LAFM runs **entirely on your machine**:
 - **Zero cloud dependencies** for trading logic
 - **Zero-knowledge security** — your API keys never leave your PC
 - **One-time license** — no recurring subscriptions
 - **Resilient by design** — automatic fallbacks for market data, model inference, and connectivity
+- **Multi-asset ready** — BTC, ETH, SOL, BNB, XRP support
+- **Advanced order types** — Market, Limit, Stop-Limit, OCO
+- **Real-time risk management** — ATR-based TP/SL suggestions
 
 **Target Market:** Crypto traders, quants, and small funds who want automated signal generation with full control over their infrastructure and data.
 
@@ -74,10 +77,10 @@ Unlike cloud-based bots, LAFM runs **entirely on your machine**:
 | Feature | Detail |
 |---------|--------|
 | **Modes** | Paper Trading ($10,000 USDT default) / Live Trading |
-| **Order Types** | Market, Limit with TP/SL |
-| **Signals** | EMA(10/30) crossover + RSI(14) + MACD(12/26/9) |
+| **Order Types** | Market, Limit, Stop-Limit, OCO (One-Cancels-the-Other) |
+| **Signals** | EMA(10/30) crossover + RSI(14) + MACD(12/26/9) + Bollinger Bands + ATR |
 | **AI Fusion** | ONNX score (0.0–1.0) + technicals → STRONG_BUY/BUY/SELL/STRONG_SELL/NEUTRAL |
-| **Risk** | Automatic TP/SL on every position. Realized + unrealized PnL tracking. |
+| **Risk** | Automatic TP/SL on every position. Realized + unrealized PnL tracking. ATR-based suggestions. |
 | **Persistence** | SQLite: trades, positions, account snapshots, AI prediction history |
 | **Heartbeat** | Account snapshot every 60s for state recovery |
 
@@ -97,30 +100,32 @@ Unlike cloud-based bots, LAFM runs **entirely on your machine**:
 |---------|--------|
 | **License Binding** | HWID (motherboard + CPU + MAC + UUID) hashed with SHA-256 |
 | **License Signing** | HMAC-SHA256 of `{hwid}|{expiry}` with secret from `.env` |
-| **Key Storage** | AES-256 encrypted local SQLite |
+| **Key Storage** | AES-256-GCM encrypted local SQLite + memory zeroization |
 | **CORS** | Restricted to `FRONTEND_ORIGIN` |
 | **Rate Limiting** | `/api/license/validate` limited to 5 req/min/IP |
+| **Electron Hardening** | `contextIsolation: true`, `nodeIntegration: false`, restricted navigation |
 | **Distribution** | One-click license generation via `scripts/generate_license.py` |
 
 ### Frontend & UX
 | Feature | Detail |
 |---------|--------|
 | **Framework** | React 18 + Vite + Tailwind CSS 3 |
-| **Charting** | Lightweight Charts 4 ( TradingView-style candles ) |
-| **Onboarding** | 4-step animated wizard (Framer Motion) |
+| **Charting** | Lightweight Charts 4 (TradingView-style candles) + drawing tools + hotkeys |
+| **Order Book** | Real-time Binance depth chart with liquidity walls |
+| **Auto-Login** | Silent health check on boot; skips license gate when valid |
+| **Onboarding** | 4-step animated wizard with API key validation (Framer Motion) |
+| **Notifications** | Floating toast system for AI signals, volatility, and order executions |
 | **Connectivity** | WebSocket with exponential backoff + jitter; fetch with 10s timeout |
 | **States** | Loading / error / success states on all API calls |
 | **Config** | URLs from `import.meta.env` (Vite) |
 
-### Desktop Packaging
+### CI/CD & Quality Gates
 | Feature | Detail |
 |---------|--------|
-| **Wrapper** | Electron 28 with context isolation |
-| **Backend** | PyInstaller one-file (`trading_app.exe` ~145 MB) |
-| **Installer** | NSIS via electron-builder |
-| **Branding** | LAFM metadata in executable + installer |
-| **Auto-Update** | `electron-updater` checking GitHub Releases silently |
-| **Process Mgmt** | Backend spawned as child; clean SIGTERM/SIGKILL shutdown |
+| **Security Audit** | GitHub Actions with Bandit (Python SAST), Safety (dependencies), Gitleaks (secret scanning) |
+| **Frontend Audit** | npm audit, ESLint security rules |
+| **Test Gate** | pytest 16/16 + vitest 6/6 as mandatory deployment condition |
+| **Deploy Script** | `scripts/deploy.ps1` automates build, sign, and release preparation |
 
 ---
 
@@ -200,7 +205,7 @@ Unlike cloud-based bots, LAFM runs **entirely on your machine**:
 |-------|-----|-------------|
 | **v1.0** | ✅ Done | Core trading engine, ONNX inference, licensing, Electron packaging |
 | **v1.1** | Q3 2026 | Real ONNX model trained on 12 months Binance data |
-| **v1.2** | Q4 2026 | Multi-asset support (ETH, SOL), portfolio-level risk |
+| **v1.2** | Q4 2026 | Multi-asset support (ETH, SOL), portfolio-level risk, advanced charting |
 | **v2.0** | 2027 | Strategy marketplace, social copy-trading, web dashboard |
 
 ---

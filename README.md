@@ -2,9 +2,11 @@
 
 **Algorithmic Crypto Trading & Paper Trading Desktop Application for Binance BTC/USDT.**
 **Author: LAFM**
+**Version:** 1.0.1
+**Updated:** 2026-07-27
 
 > **Status:** Production-ready backend & license system.  
-> **Last updated:** 2026-07-24
+> **Last updated:** 2026-07-27
 
 ---
 
@@ -39,30 +41,40 @@ crypto-trading-app/
 ├── frontend/                   # React 18 + Vite + Tailwind + Lightweight Charts
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Chart.jsx       # TradingView-style candlestick chart
-│   │   │   └── TradingPanel.jsx # Order entry + account summary
-│   │   ├── App.jsx             # License gate + WS backoff + fetch timeout
-│   │   └── main.jsx
+│   │   │   ├── CandleChart.jsx       # TradingView-style candlestick chart + drawing tools
+│   │   │   ├── HeaderBar.jsx         # Multi-pair selector, ticker, latency, mode toggle
+│   │   │   ├── TradingPanel.jsx      # Market/Limit/Stop-Limit/OCO orders + ATR TP/SL
+│   │   │   ├── OrderBookWidget.jsx   # Real-time depth chart and order book
+│   │   │   ├── AlertsToast.jsx       # Floating notifications with animations
+│   │   │   └── Onboarding.jsx        # 4-step animated wizard + API key validation
+│   │   ├── App.jsx                   # Auto-login health check, bootstrap, license gate
+│   │   ├── store.js                  # Zustand global state
+│   │   └── main.jsx                  # React entrypoint
 │   ├── .env                    # VITE_API_URL, VITE_WS_URL
 │   ├── package.json
 │   └── vite.config.js
 ├── electron/                   # Electron desktop wrapper
-│   ├── main.js                 # Spawns backend, lifecycle, updater
+│   ├── main.js                 # Spawns backend, lifecycle, updater, hardened webPreferences
 │   └── preload.js
 ├── scripts/
 │   ├── generate_license.py     # License generator (HWID-bound)
 │   ├── train_ai_model.py       # Train GradientBoosting + export ONNX
-│   └── deploy.ps1              # Automated build + sign + publish
+│   ├── deploy.ps1              # Automated build + sign + publish
+│   └── sign.ps1                # Authenticode signing helper
+├── .github/workflows/
+│   └── security_audit.yml      # SAST, secret scanning, npm audit, tests gate
 ├── docs/
 │   ├── USER_MANUAL.md          # End-user guide
 │   ├── API_KEYS_SECURITY.md    # Zero-knowledge security docs
-│   └── SYSTEM_FLOW.md          # Complete system flow diagrams
+│   ├── AUTHENTICODE_SETUP.md   # Code signing guide
+│   ├── LICENSE_DISTRIBUTION.md # License generation and validation
+│   └── PRODUCT_OVERVIEW.md     # Commercial presentation
 ├── tests/
 │   ├── test_trading_engine.py
 │   ├── test_license_manager.py
 │   └── test_ai_engine.py
 ├── assets/
-│   └── icon.png                # ⚠️ Add 512x512 for production branding
+│   └── icon.png                # LAFM branding
 ├── .gitignore
 ├── package.json                # Root workspace
 ├── electron-builder.json
@@ -75,13 +87,14 @@ crypto-trading-app/
 
 ## Technology Stack
 
-- **Frontend:** React 18, Vite, Tailwind CSS 3, Lightweight Charts 4
+- **Frontend:** React 18, Vite, Tailwind CSS 3, Lightweight Charts 4, Framer Motion, Zustand
 - **Backend:** FastAPI, Uvicorn, WebSockets, Pandas, Pandas-TA, SQLite, ONNX Runtime
 - **Desktop:** Electron 28, electron-builder, PyInstaller
 - **Security:** HWID-based licensing with HMAC-SHA256 (secret from `.env`)
-- **Testing:** pytest, pytest-asyncio, httpx
+- **Testing:** pytest, pytest-asyncio, vitest, testing-library
 - **AI/ML:** onnxruntime for CPU inference (no GPU required)
 - **Logging:** loguru with 10MB rotation + gzip compression
+- **CI/CD:** GitHub Actions with security audit pipeline
 
 ---
 
@@ -90,7 +103,7 @@ crypto-trading-app/
 ### Trading Engine
 - **Paper Trading & Live Ready** — Start with $10,000 USDT simulation. Switch to live with one toggle.
 - **Dual Market Feed** — Binance WebSocket for live ticks, automatic REST cold-start fallback, and simulation fallback for offline operation.
-- **Technical Analysis** — EMA(10/30) crossover, RSI(14), MACD(12/26/9) fused into unified signals.
+- **Technical Analysis** — EMA(10/30) crossover, RSI(14), MACD(12/26/9), Bollinger Bands, ATR fused into unified signals.
 - **AI Enhancement** — ONNX model score (0.0–1.0) combined with technicals for STRONG_BUY / STRONG_SELL signals.
 - **Risk Management** — Automatic Take-Profit and Stop-Loss on every position. Real-time unrealized PnL.
 - **Trade History** — Complete ledger persisted in SQLite. Heartbeat snapshots every 60s.
@@ -102,23 +115,27 @@ crypto-trading-app/
 - **Graceful Degradation** — Heuristic fallback if model file is missing. Never crashes.
 
 ### Security & Licensing
-- **HWID Binding** — License keys bound to machine fingerprint ( motherboard + CPU + MAC + UUID ).
+- **HWID Binding** — License keys bound to machine fingerprint (motherboard + CPU + MAC + UUID).
 - **HMAC-SHA256** — Cryptographic signature prevents tampering. Secret loaded from `.env` only.
-- **Local Storage** — API keys encrypted with AES-256. Stored in `%APPDATA%/LAFM/secure.db`. Never transmitted.
+- **Local Storage** — API keys encrypted with AES-256-GCM. Stored in `%APPDATA%/LAFM/secure.db`. Never transmitted.
+- **Memory Hardening** — API secrets zeroized after decryption to minimize RAM exposure.
 - **CORS Restricted** — Backend only accepts requests from configured `FRONTEND_ORIGIN`.
 - **Rate Limiting** — `/api/license/validate` protected at 5 req/min/IP via `slowapi`.
+- **Electron Hardening** — `contextIsolation: true`, `nodeIntegration: false`, restricted navigation.
 
 ### Frontend Experience
-- **Animated Onboarding** — 4-step guided setup with Framer Motion animations.
-- **Real-Time Charting** — Lightweight Charts with overlaid signals and AI probability.
+- **Animated Onboarding** — 4-step guided setup with Framer Motion animations + API key validation.
+- **Real-Time Charting** — Lightweight Charts with drawing tools, hotkeys, ATR-based TP/SL suggestions.
+- **Order Book & Depth** — Live Binance order book with depth visualization.
 - **Resilient Connectivity** — WebSocket reconnection with exponential backoff + jitter. Fetch requests timeout at 10s.
-- **License Gate** — Clean activation screen. Paste key or load `.lic` file.
-- **Paper Trading Toggle** — Switch between simulation and live in Settings.
+- **Auto-Login** — Silent health check on boot; skips license gate when backend confirms valid license.
+- **Notifications** — Floating toast system for AI signals, volatility spikes, and order executions.
 
 ### Desktop & Updates
 - **Electron Wrapper** — Native Windows experience. Spawns backend process automatically.
 - **Auto-Updates** — `electron-updater` checks GitHub Releases silently. Installs on restart.
 - **Model Hot-Reload** — `POST /api/model/update` downloads new ONNX models to `%APPDATA%/LAFM/models/` without reinstall.
+- **CI/CD Security Audit** — GitHub Actions pipeline with Bandit, Safety, Gitleaks, npm audit, and test gates.
 
 ---
 
@@ -174,7 +191,7 @@ python -m PyInstaller trading_app.spec --clean --noconfirm
 # 4. Build Electron installer
 cd ..
 npm run build:electron
-# Output: dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.0.exe
+# Output: dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe
 ```
 
 **Branding Verified:**
@@ -193,10 +210,24 @@ npm run build:electron
 | GET | `/api/account/balance` | Account summary |
 | GET | `/api/account/positions` | Open positions |
 | GET | `/api/account/history` | Trade history |
-| POST | `/api/trading/order` | Place order (MARKET/LIMIT + TP/SL) |
-| GET | `/api/trading/signals` | Current signals + AI probability |
+| POST | `/api/trading/order` | Place order (MARKET/LIMIT/STOP_LIMIT/OCO + TP/SL) |
+| GET | `/api/trading/signals` | Current signals + AI probability + ATR |
+| GET | `/api/market/ticker` | 24h ticker metrics |
+| GET | `/api/market/orderbook` | Order book depth |
+| POST | `/api/auth/verify-keys` | Validate Binance API keys |
 | POST | `/api/model/update` | Download new ONNX model |
 | WS | `/ws/market` | Real-time candles + signals |
+
+---
+
+## Order Types Supported
+
+| Type | Description |
+|------|-------------|
+| MARKET | Immediate execution at current price |
+| LIMIT | Execution at specified price or better |
+| STOP_LIMIT | Triggered when stop price is hit, then limit order |
+| OCO | One-Cancels-the-Other: TP + SL bracket |
 
 ---
 
@@ -216,15 +247,22 @@ LIC-{base64_chunk_8}-{base64_chunk_8}-{...}
 ## Testing
 
 ```powershell
+# Backend
 cd backend
 python -m pytest tests/ -v
 # Expected: 16 passed
+
+# Frontend
+cd frontend
+npm test
+# Expected: 6 passed
 ```
 
 Coverage:
 - TradingEngine PnL, TP/SL, limit orders, snapshots, signals
 - LicenseManager HWID, validation, expiry, format
 - AIPredictor fallback, bullish/bearish bias
+- Frontend: splash, license gate, onboarding, auto-login, packaging
 
 ---
 
@@ -252,14 +290,22 @@ VITE_WS_URL=ws://127.0.0.1:8765/ws/market
 ## Security Architecture
 
 See [`docs/API_KEYS_SECURITY.md`](docs/API_KEYS_SECURITY.md) for:
-- AES-256 local encryption keyed by HWID
+- AES-256-GCM local encryption keyed by HWID
+- Zeroize/shredding of secrets after use
 - Binance permission restrictions (Reading + Spot Trading only)
-- Zero-knowledge model: LAFM servers never touch credentials
+- Electron hardening and CORS policies
 
 See [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) for:
 - Binance API key setup walkthrough
 - Signal interpretation guide
 - FAQ: privacy, connectivity, model updates
+
+See [`.github/workflows/security_audit.yml`](.github/workflows/security_audit.yml) for:
+- Automated SAST with Bandit
+- Vulnerability scanning with Safety
+- Secret scanning with Gitleaks
+- npm audit and ESLint security checks
+- Test gates as deployment condition
 
 ---
 

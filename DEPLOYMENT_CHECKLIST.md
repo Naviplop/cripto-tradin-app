@@ -1,4 +1,4 @@
-# Checklist Operacional - Lanzamiento LAFM
+# Checklist Operacional - Lanzamiento LAFM v1.0.1
 
 ## Pre-requisitos
 - [ ] `assets/icon.png` presente (512x512, recomendado para branding).
@@ -71,7 +71,7 @@ npm run build:electron
   - No debe aparecer `Using heuristic fallback`
 
 ### Instalador Electron
-- [ ] `dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.0.exe` existe.
+- [ ] `dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe` existe.
 - [ ] Al instalar, el acceso directo se llama `LAFM Trading Terminal`.
 - [ ] Al ejecutar:
   - [ ] Frontend carga desde `frontend/dist/`.

@@ -1,17 +1,18 @@
-# License Distribution Guide — LAFM Crypto Trading Terminal
+# License Distribution Guide — LAFM Crypto Trading Terminal v1.0.1
 
 ## Overview
 
-LAFM Crypto Trading Terminal uses hardware-bound licenses. Each license is tied to a unique machine fingerprint (HWID) and signed with HMAC-SHA256. The license validation happens locally; no phone-home or online activation is required.
+LAFM Crypto Trading Terminal v1.0.1 uses hardware-bound licenses. Each license is tied to a unique machine fingerprint (HWID) and signed with HMAC-SHA256. The license validation happens locally; no phone-home or online activation is required.
 
 ## Client Workflow
 
 1. **Client runs the app** on their Windows PC.
-2. **App displays HWID** in the license gate screen.
+2. **App displays HWID** in the license gate screen if needed.
 3. **Client sends HWID** to LAFM via email/chat.
 4. **LAFM generates license** using `scripts/generate_license.py`.
 5. **Client receives `LIC-...` key** and pastes it into the app.
 6. **App validates locally** and unlocks full features.
+7. **Auto-login:** On subsequent launches, the backend automatically validates the stored license via `/api/health` and skips the license gate if valid.
 
 ## HWID Generation
 
@@ -95,8 +96,10 @@ In `backend/license_manager.py:validate()`:
 
 1. Update `backend/.env` with production `LICENSE_SECRET`.
 2. Rebuild backend: `npm run build:backend` (or `python -m PyInstaller trading_app.spec`).
-3. Rebuild installer: `npm run build:electron`.
+3. Rebuild installer: `npm run build:electron` or `.\scripts\deploy.ps1`.
 4. Test the installer on a clean VM or secondary PC.
+5. Run security audit: `.github/workflows/security_audit.yml`.
+6. Publish release on GitHub with auto-update payload.
 
 ## Support Flow for Clients
 

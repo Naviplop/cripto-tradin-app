@@ -1,4 +1,4 @@
-# Authenticode Code Signing Setup Guide
+# Authenticode Code Signing Setup Guide — LAFM v1.0.1
 
 ## Overview
 

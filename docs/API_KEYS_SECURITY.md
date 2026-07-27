@@ -1,4 +1,4 @@
-# API Keys & Security Architecture
+# API Keys & Security Architecture — LAFM v1.0.1
 
 ## Zero-Knowledge Local Storage
 
@@ -7,10 +7,11 @@ Your API credentials are encrypted locally using AES-256 with a key derived from
 **LAFM servers never receive, store, or transmit your API credentials.**
 
 ### Encryption Details
-- **Algorithm:** AES-256-CBC
-- **Key Derivation:** HMAC-SHA256(HWID, "LAFM-SECURE-KEY")
+- **Algorithm:** AES-256-GCM
+- **Key Derivation:** HWID-bound key material truncated/padded to 32 bytes
 - **Storage:** SQLite with encrypted blobs
 - **Scope:** Local machine only
+- **Memory Hardening:** Secrets are zeroized after decryption
 
 ---
 
@@ -56,6 +57,7 @@ The bundled Python backend handles all exchange interactions locally.
 - Only origins listed in `FRONTEND_ORIGIN` are permitted.
 - Credentials are allowed only from the configured frontend origin.
 - Rate limiting applied to sensitive endpoints (`/api/license/validate`: 5 req/min/IP).
+- Global exception handler avoids leaking internal details.
 
 ---
 
@@ -98,3 +100,7 @@ If you suspect credential exposure:
 2. Delete `%APPDATA%/LAFM/secure.db`.
 3. Restart the application and re-enter credentials.
 4. Contact LAFM support if you need a new license for a different machine.
+
+## Contact
+- **Security contact:** security@lafm [configurar]
+- **Support:** support@lafm [configurar]

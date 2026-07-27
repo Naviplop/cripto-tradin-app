@@ -69,6 +69,7 @@ def _get_connection():
             api_key_enc BLOB,
             api_secret_enc BLOB,
             paper_mode INTEGER DEFAULT 1,
+            license_token_enc BLOB,
             updated_at TEXT NOT NULL
         )
     """)
@@ -121,6 +122,46 @@ def clear_api_keys():
     conn = _get_connection()
     try:
         conn.execute("UPDATE secure_store SET api_key_enc = NULL, api_secret_enc = NULL WHERE id = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_license_token(token: Optional[str]):
+    hwid = _get_hwid()
+    key = _derive_aes_key(hwid)
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO secure_store (id, license_token_enc, updated_at) VALUES (1, ?, ?)",
+            (
+                _encrypt(token, key) if token else None,
+                __import__("datetime").datetime.now(__import__("datetime").datetime.timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_license_token() -> Optional[str]:
+    hwid = _get_hwid()
+    key = _derive_aes_key(hwid)
+    conn = _get_connection()
+    try:
+        row = conn.execute("SELECT license_token_enc FROM secure_store WHERE id = 1").fetchone()
+        if not row:
+            return None
+        token = _decrypt(row["license_token_enc"], key) if row["license_token_enc"] else None
+        return token
+    finally:
+        conn.close()
+
+
+def clear_license_token():
+    conn = _get_connection()
+    try:
+        conn.execute("UPDATE secure_store SET license_token_enc = NULL WHERE id = 1")
         conn.commit()
     finally:
         conn.close()

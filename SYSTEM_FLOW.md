@@ -1,7 +1,8 @@
 # LAFM Crypto Trading Terminal — Flujo del Sistema
 
 > Documento vivo del flujo completo del sistema, desde la distribución de la licencia hasta la ejecución en producción.
-> Generado el: 2026-07-24
+> Generado el: 2026-07-27
+> Versión: 1.0.1
 
 ---
 
@@ -14,10 +15,11 @@ El sistema se compone de:
 - **Desktop wrapper**: Electron (`electron/`) — en producción empaqueta backend y frontend
 - **Motor de IA**: ONNX Runtime (`ai_engine.py`)
 - **Feed de mercado**: Binance WebSocket con fallback simulado (`market_feed.py`)
-- **Almacenamiento seguro**: SQLite + AES-256 (`secure_storage.py`)
+- **Almacenamiento seguro**: SQLite + AES-256-GCM + zeroize (`secure_storage.py`)
 - **Gestión de licencias**: HMAC-SHA256 + HWID (`license_manager.py` + `scripts/generate_license.py`)
 - **Actualizaciones**: `electron-updater` para la app y endpoint propio para el modelo ONNX
 - **Deploy**: scripts PowerShell (`scripts/deploy.ps1`)
+- **CI/CD**: GitHub Actions security audit (`security_audit.yml`)
 
 ---
 
@@ -146,7 +148,7 @@ flowchart TD
     H --> I[_process_tick del TradingEngine]
     I --> J[_generate_signals] --> K[AI Predict]
     K --> L[_combine_signal_with_ai]
-    L --> M[Resultado: BUY / SELL / NEUTRAL / STRONG_*]
+    L --> M[Resultado: BUY / SELL / NEUTRAL / STRONG_* + current_price + atr]
     M --> N[broadcast_market_data a WebSockets conectados]
 ```
 
@@ -159,6 +161,7 @@ flowchart TD
   - `BUY` + `ai_prob > 0.65` → `STRONG_BUY`
   - `SELL` + `ai_prob < 0.35` → `STRONG_SELL`
   - Otros casos mantienen `BUY` / `SELL` / `NEUTRAL`
+- `broadcast_market_data` envía `candle` + `signals` incluyendo `current_price` y `atr`.
 
 ### Archivos involucrados
 

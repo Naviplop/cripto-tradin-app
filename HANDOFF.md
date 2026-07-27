@@ -2,8 +2,9 @@
 
 **Proyecto:** `crypto-trading-app`
 **Ubicación:** `C:\Users\fijuarez\AppData\Local\Programs\Microsoft VS Code\crypto-trading-app\`
-**Generado:** 2026-07-24
-**Actualizado:** 2026-07-24
+**Generado:** 2026-07-27
+**Actualizado:** 2026-07-27
+**Versión:** 1.0.1
 **Propósito:** Estado real del proyecto (implementado vs. pendiente) y plan para continuar.
 
 ---
@@ -18,7 +19,7 @@
 | **Motor de IA** | Implementado | `backend/ai_engine.py` contiene `AIPredictor` con `onnxruntime`. Carga `models/trading_model.onnx`. Normaliza features (close, volume, RSI, MACD, EMA fast/slow) sobre ventana de 30 velas. Devuelve score 0.0–1.0. **Degradación elegante a modelo heurístico** si falta el `.onnx`. |
 | **Persistencia SQLite** | Implementada | `backend/storage.py` con tablas `account_snapshots`, `positions`, `trades`, `license_cache`, `predictions`. Carga estado al arrancar, cierra posiciones en DB por `id`, guarda predicciones AI, snapshots periódicos de cuenta. |
 | **Feed de Mercado Binance** | **Integrado en main.py** | `backend/market_feed.py` conectado a `wss://stream.binance.com:9443/ws/btcusdt@kline_1m` en `startup_event()`. Reconexión backoff exponencial, deduplicación de velas, **fallback automático a simulación** tras 5 errores consecutivos. `on_candle` vinculado a `trading_engine._process_tick()`. |
-| **Frontend React** | Funcional mejorado | React 18 + Vite + Tailwind + Lightweight Charts 4. Pantalla de licencia, gráfico de velas, panel de trading. Nuevo: **timeout 10s en fetch** (`AbortController`), **estados loading/error**, **reconexión WS con backoff exponencial + jitter**. Lee URLs desde `import.meta.env`. |
+| **Frontend React** | Funcional mejorado | React 18 + Vite + Tailwind + Lightweight Charts 4. Pantalla de licencia, gráfico de velas, panel de trading, OrderBook, HeaderBar con ticker. Nuevo: **timeout 10s en fetch** (`AbortController`), **estados loading/error**, **reconexión WS con backoff exponencial + jitter**, **auto-login silencioso** vía `/api/health`, **Zustand** para estado global. |
 | **Gestión de Licencias** | Seguro | `LicenseManager` con HWID (Windows/Mac/Linux) + HMAC-SHA256 + expiración. **Secreto leído de `LICENSE_SECRET` en `.env`**; no hay claves hardcodeadas. `scripts/generate_license.py` también usa `.env`. Formato de clave adaptado a base64 completo segmentado. |
 | **Configuración .env** | Completo | `backend/.env` con variables cargadas vía `python-dotenv`. `frontend/.env` con URLs. |
 | **Pruebas** | 16/16 passing | Suite `pytest` en `backend/tests/` cubriendo PnL/TP/SL (`test_trading_engine.py`), HWID/HMAC (`test_license_manager.py`), inferencia AI (`test_ai_engine.py`). |
@@ -30,15 +31,18 @@
 | Categoría | Brecha | Severidad |
 |-----------|--------|-----------|
 | **Entrenamiento del modelo ONNX** | No existe `models/trading_model.onnx`; solo corre el fallback heurístico | Media |
-| **Firma de código** | Sin firma Authenticode para `.exe` de Windows | Media |
-| **CI/CD** | Sin GitHub Actions ni pipeline de compilación | Media |
-| **Auto-actualizador** | Sin mecanismo de actualización para clientes distribuidos | Baja |
-| **Diseño Responsivo** | Barra lateral fija `w-80`; sin adaptación móvil | Baja |
-| **Gestión de Estado** | Solo `useState` local; sin Zustand/Redux para estado complejo | Baja |
-| **Icono** | `assets/icon.png` no existe | Baja |
+| **Firma de código** | Sin firma Authenticode para `.exe` de Windows; `scripts/sign.ps1` listo | Media |
+| **CI/CD** | ✅ Implementado en `.github/workflows/security_audit.yml` | - |
+| **Auto-actualizador** | ✅ Configurado en `electron/main.js` con `electron-updater` | - |
+| **Diseño Responsivo** | Barra lateral fija `w-80`; sin adaptación móvil completa | Baja |
+| **Icono** | `assets/icon.png` presente | ✅ |
 | **Logging estructurado** | ✅ Implementado con loguru (rotación 10MB, retención 30 días) | - |
 | **Rate Limiting** | ✅ Implementado en `/api/license/validate` (5 req/min/IP) | - |
 | **Script de entrenamiento IA** | ✅ scripts/train_ai_model.py listo | - |
+| **Security hardening** | ✅ AES-256-GCM + zeroize + Electron `webSecurity: true` + navegación restringida | - |
+| **Order types** | ✅ Market, Limit, Stop-Limit, OCO soportados en backend y frontend | - |
+| **Market data endpoints** | ✅ `/api/market/ticker` y `/api/market/orderbook` agregados | - |
+| **Deploy script** | ✅ `scripts/deploy.ps1` con build, sign y prepare release | - |
 
 ---
 
@@ -62,11 +66,15 @@ crypto-trading-app/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Chart.jsx          # Lightweight Charts con señales superpuestas
-│   │   │   └── TradingPanel.jsx   # Market/Limit + TP/SL
-│   │   ├── App.jsx                # ✅ License gate + WS reconexión backoff+jitter + fetch timeout
-│   │   ├── main.jsx
-│   │   └── index.css
+│   │   │   ├── CandleChart.jsx       # TradingView-style candlestick chart + drawing tools + hotkeys
+│   │   │   ├── HeaderBar.jsx         # Multi-pair selector, timeframe, ticker 24h, latency, mode
+│   │   │   ├── TradingPanel.jsx      # Market/Limit/Stop-Limit/OCO + ATR-based TP/SL + position sizing
+│   │   │   ├── OrderBookWidget.jsx   # Real-time Binance depth chart and order book
+│   │   │   ├── AlertsToast.jsx       # Floating notifications with animations
+│   │   │   └── Onboarding.jsx        # 4-step animated wizard + API key validation
+│   │   ├── App.jsx                   # Auto-login health check, bootstrap, license gate, WS
+│   │   ├── store.js                  # Zustand global state
+│   │   └── main.jsx                  # React entrypoint
 │   ├── .env                       # ✅ VITE_API_URL, VITE_WS_URL
 │   ├── package.json
 │   └── vite.config.js
@@ -174,7 +182,8 @@ crypto-trading-app/
 | TD-04 | CORS abierto a cualquier origen | `backend/main.py` | ⚠️ YA CORREGIDO: restringido a `FRONTEND_ORIGIN` desde `.env` |
 | TD-05 | fetch sin timeout ni estados de carga | `frontend/src/App.jsx` | ⚠️ YA CORREGIDO: `AbortController` 10s + estados `loading`/`error` |
 | TD-06 | Reconexión WS fija 3s | `frontend/src/App.jsx` | ⚠️ YA CORREGIDO: backoff exponencial con jitter |
-| TD-07 | `datetime.utcnow()` deprecado | Varios archivos | Advertido en warnings; reemplazar por `datetime.now(timezone.utc)` |
+| `datetime.utcnow()` deprecado | Varios archivos | Advertido en warnings; reemplazar por `datetime.now(timezone.utc)` |
+| TD-14 | Faltan pruebas frontend para OrderBook y HeaderBar | `frontend/tests/` | Añadir tests con vitest |
 | TD-08 | `start_simulation` sin interruptor de circuito | `backend/trading_engine.py` | Añadir máximo de errores consecutivos y apagado elegante |
 | TD-09 | Sin rate limiting en endpoints sensibles | `backend/main.py` | ⚠️ YA CORREGIDO: `slowapi` en `/api/license/validate` (5 req/min/IP) |
 | TD-10 | Logging estructurado con rotación | Backend | ⚠️ YA CORREGIDO: `backend/logger.py` con `loguru` (rotación 10MB, retención 30 días, compresión gzip) |
@@ -202,16 +211,27 @@ crypto-trading-app/
 | Storage: tabla `predictions` + `predict()` diario | ✅ Hecho |
 | Bug variable `self._ consecutive_errors` | ✅ Corregido |
 | Bug formato licencia (solo 32 chars base64) | ✅ Corregido |
+| CandleChart avanzado con herramientas de dibujo y hotkeys | ✅ Hecho |
+| OrderBookWidget en tiempo real | ✅ Hecho |
+| TradingPanel completo: Market/Limit/Stop-Limit/OCO + ATR TP/SL | ✅ Hecho |
+| HeaderBar multi-cripto con ticker 24h y latencia | ✅ Hecho |
+| Auto-login silencioso por `/api/health` | ✅ Hecho |
+| Onboarding con validación `POST /api/auth/verify-keys` | ✅ Hecho |
+| AlertsToast con notificaciones animadas | ✅ Hecho |
+| `secure_storage` AES-256-GCM + zeroize de secretos | ✅ Hecho |
+| Hardening Electron (`webSecurity`, navegación restringida) | ✅ Hecho |
+| CI/CD pipeline `.github/workflows/security_audit.yml` | ✅ Hecho |
+| `scripts/deploy.ps1` para build, sign y release | ✅ Hecho |
+| `docs/*.md` actualizados a v1.0.1 | ✅ Hecho |
 
 ### 4.2 Pendiente para Producción
 
 - [ ] Entrenar y colocar `models/trading_model.onnx` real
-- [ ] Firma Authenticode del `.exe`
-- [ ] CI/CD pipeline (`.github/workflows`)
-- [ ] Auto-actualizador Electron (`electron-updater`)
-- [ ] Diseño responsivo (móvil/tablet)
-- [ ] Estado global frontend (Zustand)
-- [ ] `assets/icon.png`
+- [ ] Firma Authenticode del `.exe` y del instalador
+- [ ] Publicar release en GitHub Releases
+- [ ] Diseño responsivo completo (móvil/tablet)
+- [ ] Extender cobertura de tests frontend (OrderBook, HeaderBar)
+- [ ] Validar pipeline CI/CD en GitHub Actions
 
 ---
 
@@ -273,7 +293,7 @@ node scripts/check-assets.js
 
 # 1. Reentrenar modelo ONNX (opcional pero recomendado)
 cd scripts
-python train_and_export_onnx.py
+python train_ai_model.py
 # Output: backend/models/trading_model.onnx, scaler_params.json, feature_names.json
 
 # 2. Frontend
@@ -289,7 +309,7 @@ python -m PyInstaller trading_app.spec --clean --noconfirm
 # 4. Electron installer NSIS
 cd ..
 npm run build:electron
-# Output: dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.0.exe
+# Output: dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe
 ```
 
 **Metadatos de autoría LAFM incrustados:**
@@ -305,7 +325,7 @@ npm run build:electron
   ```
   Debe mostrar `LAFM` en todos los campos.
 - `pyi-archive_viewer backend/dist/trading_app.exe` permite inspeccionar que incluye `models/trading_model.onnx`, `models/scaler_params.json`, `models/feature_names.json` y `logs/`.
-- `dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.0.exe` es el instalador NSIS.
+- `dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe` es el instalador NSIS.
 - Al instalar y ejecutar, Electron inicia `trading_app.exe` como proceso hijo.
 - En ejecutable empaquetado, `get_base_path()` detecta `sys._MEIPASS` y resuelve `trading.db`, `logs/` y `models/` al directorio temporal de extracción.
 - El backend carga `backend/.env` desde `BASE_PATH` y usa `LICENSE_SECRET` para validar licencias HWID-bound.
@@ -353,14 +373,17 @@ El script:
    - Suite `pytest` completa: 16 tests pasando (`test_trading_engine`, `test_license_manager`, `test_ai_engine`).
 
  4. **Empaquetado y Config:**
-    - `backend/.env`: actualizado con `FRONTEND_ORIGIN`, `BINANCE_WS_URL`.
-    - Creado `.gitignore` en raíz.
-    - `backend/requirements.txt`: añadidas `onnxruntime`, `pytest`, `pytest-asyncio`, `httpx`, `scikit-learn`, `skl2onnx`, `slowapi`, `loguru`, `joblib`, `requests`.
-    - Agregada función `get_base_path()` en `main.py`, `storage.py`, `ai_engine.py`, `logger.py` para resolver rutas en ejecutable empaquetado (`sys._MEIPASS`).
-    - Actualizado `backend/trading_app.spec`: incluye `models/trading_model.onnx`, `backend/logs/`, binarios de `onnxruntime`/`sklearn`/`loguru` via `collect_all`.
-    - Actualizado `electron/main.js`: inicia `trading_app.exe` como proceso hijo, captura stdout/stderr, cierre limpio con `SIGTERM` + fallback `SIGKILL`.
-    - Actualizado `electron-builder.json`: incluye `backend/dist/trading_app.exe` como `extraResource` en instalador NSIS.
-    - Actualizado `package.json`: script `build` secuencial frontend -> backend -> electron, `postinstall` instala dependencias de ambos mundos.
+     - `backend/.env`: actualizado con `FRONTEND_ORIGIN`, `BINANCE_WS_URL`.
+     - Creado `.gitignore` en raíz.
+     - `backend/requirements.txt`: añadidas `onnxruntime`, `pytest`, `pytest-asyncio`, `httpx`, `scikit-learn`, `skl2onnx`, `slowapi`, `loguru`, `joblib`, `requests`.
+     - Agregada función `get_base_path()` en `main.py`, `storage.py`, `ai_engine.py`, `logger.py` para resolver rutas en ejecutable empaquetado (`sys._MEIPASS`).
+     - Actualizado `backend/trading_app.spec`: incluye `models/trading_model.onnx`, `backend/logs/`, binarios de `onnxruntime`/`sklearn`/`loguru` via `collect_all`.
+     - Actualizado `electron/main.js`: inicia `trading_app.exe` como proceso hijo, captura stdout/stderr, cierre limpio con `SIGTERM` + fallback `SIGKILL`, hardening de `webPreferences`.
+     - Actualizado `electron-builder.json`: incluye `backend/dist/trading_app.exe` como `extraResource` en instalador NSIS.
+     - Actualizado `package.json`: script `build` secuencial frontend -> backend -> electron, `postinstall` instala dependencias de ambos mundos.
+     - Agregado `.github/workflows/security_audit.yml`: pipeline SAST, secret scanning, npm audit, tests gate.
+     - Agregado `scripts/deploy.ps1`: build, sign y preparación de release.
+     - Actualizado `docs/*.md` con estado actual del sistema v1.0.1.
 
 ---
 
