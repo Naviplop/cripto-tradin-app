@@ -165,6 +165,12 @@ export default function App() {
     };
   }, [isLicensed, showOnboarding]);
 
+  useEffect(() => {
+    if (!isLicensed || showOnboarding) return;
+    const interval = setInterval(fetchCandles, 2000);
+    return () => clearInterval(interval);
+  }, [isLicensed, showOnboarding]);
+
   const fetchAccount = async () => {
     try {
       const data = await fetchWithTimeout(`${API_BASE}/api/account/balance`);
