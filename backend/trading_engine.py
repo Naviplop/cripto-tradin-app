@@ -389,7 +389,7 @@ class TradingEngine:
         state.setdefault("atr", 0.0)
         return state
 
-    def get_candles(self, limit: int = 200) -> List[Dict[str, Any]]:
+    def get_candles(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 200) -> List[Dict[str, Any]]:
         seen = set()
         unique = []
         for c in list(self.candles):
@@ -397,17 +397,41 @@ class TradingEngine:
             if key not in seen:
                 seen.add(key)
                 unique.append(c)
-        return [
-            {
-                "time": c.timestamp.isoformat(),
-                "open": c.open,
-                "high": c.high,
-                "low": c.low,
-                "close": c.close,
-                "volume": c.volume,
-            }
-            for c in unique[-limit:]
-        ]
+        local_candles = unique[-limit:]
+
+        try:
+            import requests
+            url = (
+                "https://api.binance.com/api/v3/klines"
+                f"?symbol={symbol}&interval={interval}&limit={limit}"
+            )
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            rows = resp.json()
+            remote_candles = [
+                {
+                    "time": datetime.fromtimestamp(r[0] / 1000, tz=timezone.utc).isoformat(),
+                    "open": float(r[1]),
+                    "high": float(r[2]),
+                    "low": float(r[3]),
+                    "close": float(r[4]),
+                    "volume": float(r[5]),
+                }
+                for r in rows
+            ]
+            return remote_candles
+        except Exception:
+            return [
+                {
+                    "time": c.timestamp.isoformat(),
+                    "open": c.open,
+                    "high": c.high,
+                    "low": c.low,
+                    "close": c.close,
+                    "volume": c.volume,
+                }
+                for c in local_candles
+            ]
 
     async def _process_tick(self, candle: Candle):
         self.current_price = candle.close

@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 const PAIRS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
 
-export default function HeaderBar({ account, connected, ticker }) {
+export default function HeaderBar({ account, connected, ticker, onTimeframeChange, onPairChange }) {
   const [pair, setPair] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1m');
   const [latency, setLatency] = useState(null);
@@ -39,14 +39,22 @@ export default function HeaderBar({ account, connected, ticker }) {
         <span className="text-sm font-bold text-slate-100 tracking-wide">LAFM</span>
         <select
           value={pair}
-          onChange={(e) => changePair(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setPair(next);
+            onPairChange?.(next);
+          }}
           className="bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono rounded px-2 py-1 focus:outline-none focus:border-cyan-500"
         >
           {PAIRS.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         <select
           value={timeframe}
-          onChange={(e) => changeTimeframe(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setTimeframe(next);
+            onTimeframeChange?.(next);
+          }}
           className="bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono rounded px-2 py-1 focus:outline-none focus:border-cyan-500"
         >
           {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}

@@ -31,6 +31,8 @@ export default function App() {
   const [ticker, setTicker] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [timeframe, setTimeframe] = useState('1m');
+  const [symbol, setSymbol] = useState('BTCUSDT');
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [bootstrapError, setBootstrapError] = useState('');
   const wsRef = useRef(null);
@@ -169,7 +171,7 @@ export default function App() {
     if (!isLicensed || showOnboarding) return;
     const interval = setInterval(fetchCandles, 2000);
     return () => clearInterval(interval);
-  }, [isLicensed, showOnboarding]);
+  }, [isLicensed, showOnboarding, timeframe, symbol]);
 
   const fetchAccount = async () => {
     try {
@@ -209,7 +211,7 @@ export default function App() {
 
   const fetchCandles = async () => {
     try {
-      const data = await fetchWithTimeout(`${API_BASE}/api/market/klines?limit=200`);
+      const data = await fetchWithTimeout(`${API_BASE}/api/market/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(timeframe)}&limit=200`);
       if (Array.isArray(data)) {
         const seen = new Set();
         const deduped = [];
@@ -254,8 +256,11 @@ export default function App() {
   };
 
   const handleTimeframeChange = (tf) => {
-    // In a real implementation, send a WS message to change subscription
-    console.log('Timeframe change requested:', tf);
+    setTimeframe(tf);
+  };
+
+  const handlePairChange = (nextSymbol) => {
+    setSymbol(nextSymbol);
   };
 
   const handlePauseToggle = (paused) => {
@@ -358,7 +363,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <HeaderBar account={account} connected={connected} ticker={ticker} />
+      <HeaderBar account={account} connected={connected} ticker={ticker} onTimeframeChange={handleTimeframeChange} onPairChange={handlePairChange} />
       {error && (
         <div className="mx-4 mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
           {error}

@@ -150,8 +150,8 @@ async def market_orderbook(limit: int = 50):
 
 
 @app.get("/api/market/klines")
-async def market_klines(limit: int = 200):
-    return trading_engine.get_candles(limit=limit)
+async def market_klines(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 200):
+    return trading_engine.get_candles(symbol=symbol, interval=interval, limit=limit)
 
 
 @app.get("/api/health")
@@ -212,8 +212,12 @@ async def get_signals():
 
 @app.post("/api/auth/verify-keys")
 async def verify_keys(body: ApiKeyRequest):
-    save_api_keys(body.api_key, body.api_secret, body.paper_mode)
-    return {"valid": True}
+    try:
+        save_api_keys(body.api_key, body.api_secret, body.paper_mode)
+        return {"valid": True}
+    except Exception as e:
+        logger.error("verify_keys failed: %s", repr(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/config/api-keys")
