@@ -3,10 +3,10 @@
 **Algorithmic Crypto Trading & Paper Trading Desktop Application for Binance BTC/USDT.**
 **Author: LAFM**
 **Version:** 1.0.1
-**Updated:** 2026-07-27
+**Updated:** 2026-07-28
 
-> **Status:** Production-ready backend & license system.  
-> **Last updated:** 2026-07-27
+> **Status:** Production-ready backend, license admin API, and Electron connectivity fixes landed.  
+> **Last updated:** 2026-07-28
 
 ---
 
@@ -119,8 +119,9 @@ crypto-trading-app/
 - **HMAC-SHA256** — Cryptographic signature prevents tampering. Secret loaded from `.env` only.
 - **Local Storage** — API keys encrypted with AES-256-GCM. Stored in `%APPDATA%/LAFM/secure.db`. Never transmitted.
 - **Memory Hardening** — API secrets zeroized after decryption to minimize RAM exposure.
-- **CORS Restricted** — Backend only accepts requests from configured `FRONTEND_ORIGIN`.
+- **CORS Restricted** — Backend accepts localhost, Electron packaged origin, and loopback origins via regex.
 - **Rate Limiting** — `/api/license/validate` protected at 5 req/min/IP via `slowapi`.
+- **Admin API** — Owner can list, issue, revoke, and clear licenses remotely using `ADMIN_API_KEY`.
 - **Electron Hardening** — `contextIsolation: true`, `nodeIntegration: false`, restricted navigation.
 
 ### Frontend Experience
@@ -242,7 +243,40 @@ LIC-{base64_chunk_8}-{base64_chunk_8}-{...}
 - Configurable expiration
 - Generated via `scripts/generate_license.py`
 
+### Owner Workflow
+
+```powershell
+# generate for current machine
+cd scripts
+python generate_license.py 365
+
+# generate for a friend's machine
+python generate_license.py --hwid <FRIEND_HWID> 365
+python generate_license.py --hwid <FRIEND_HWID> 30 --note "trial"
+
+# view registry
+notepad ../backend/licenses_registry.json
+```
+
+### Admin Remote Control API
+
+Set `ADMIN_API_KEY` in `backend/.env`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/licenses` | List issued/revoked licenses |
+| POST | `/api/admin/issue` | Issue license for target HWID |
+| POST | `/api/admin/revoke` | Revoke license by HWID |
+| DELETE | `/api/admin/licenses` | Clear registry |
+
+Headers:
+- `X-Admin-Token: <ADMIN_API_KEY>`
+- or query param `?admin_token=<ADMIN_API_KEY>`
+
 ---
+
+
+
 
 ## Testing
 

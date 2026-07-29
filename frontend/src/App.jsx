@@ -35,6 +35,8 @@ export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [bootstrapError, setBootstrapError] = useState('');
+  const [hwid, setHwid] = useState('');
+  const [copiedHwid, setCopiedHwid] = useState(false);
   const wsRef = useRef(null);
 
   const store = useAppStore();
@@ -73,6 +75,7 @@ export default function App() {
     fetchWithTimeout(`${API_BASE}/api/health`, {}, 8000)
       .then(data => {
         if (cancelled) return;
+        if (data?.hwid) setHwid(data.hwid);
         if (data?.license_valid) {
           setIsLicensed(true);
           setLicenseValid(true);
@@ -310,6 +313,17 @@ export default function App() {
     setShowOnboarding(false);
   };
 
+  const copyHwid = async () => {
+    if (!hwid) return;
+    try {
+      await navigator.clipboard.writeText(hwid);
+      setCopiedHwid(true);
+      setTimeout(() => setCopiedHwid(false), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
   if (!splashComplete) {
     return <SplashScreen onComplete={handleSplashComplete} />;
   }
@@ -352,6 +366,20 @@ export default function App() {
             {loading ? 'Validating...' : 'Activate License'}
           </button>
           <p className="text-xs text-slate-500 mt-4 text-center">Requires backend server running on port 8765</p>
+          {hwid && (
+            <div className="mt-4 p-3 bg-slate-800 border border-slate-700 rounded">
+              <p className="text-xs text-slate-400 mb-1">Your Hardware ID</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-200 break-all font-mono flex-1">{hwid}</p>
+                <button
+                  onClick={copyHwid}
+                  className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-1 rounded border border-slate-600 whitespace-nowrap"
+                >
+                  {copiedHwid ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

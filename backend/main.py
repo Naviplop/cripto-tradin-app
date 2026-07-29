@@ -66,8 +66,16 @@ DEV_ORIGINS = [
     "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:8765",
+    "http://127.0.0.1:8765",
 ]
-CORS_ORIGINS = list({FRONTEND_ORIGIN, *DEV_ORIGINS, *EXTRA_CORS_ORIGINS})
+CORS_REGEX = os.environ.get("CORS_REGEX", r"^http://(localhost|127\.0\.0\.1)(:\d+)?$|^null$")
+
+TRADING_APP_DATA_DIR = os.environ.get("TRADING_APP_DATA_DIR") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LAFM")
+LICENSE_REGISTRY_PATH = os.path.join(TRADING_APP_DATA_DIR, "licenses_registry.json")
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+
+os.makedirs(TRADING_APP_DATA_DIR, exist_ok=True)
 
 trading_engine = TradingEngine(initial_balance=10000.0)
 license_manager = LicenseManager()
@@ -79,7 +87,7 @@ app.state.limiter = limiter
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -156,7 +164,11 @@ async def market_klines(symbol: str = "BTCUSDT", interval: str = "1m", limit: in
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "license_valid": license_manager.is_valid()}
+    return {
+        "status": "ok",
+        "license_valid": license_manager.is_valid(),
+        "hwid": license_manager.get_hardware_id()
+    }
 
 
 @app.options("/api/license/validate")
@@ -265,6 +277,90 @@ async def update_model(body: ModelUpdateRequest):
     except Exception as exc:
         logger.error("Model update failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _load_registry() -> dict:
+    if os.path.isfile(LICENSE_REGISTRY_PATH):
+        try:
+            with open(LICENSE_REGISTRY_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"licenses": [], "revoked": []}
+
+
+def _save_registry(data: dict) -> None:
+    os.makedirs(os.path.dirname(LICENSE_REGISTRY_PATH), exist_ok=True)
+    with open(LICENSE_REGISTRY_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _build_license(target_hwid: str, days_valid: int = 365) -> str:
+    expiry = (datetime.now(timezone.utc) + timedelta(days=days_valid)).isoformat()
+    message = f"{target_hwid}|{expiry}"
+    sig = hmac.new(LICENSE_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
+    payload = {"hwid": target_hwid, "exp": expiry, "sig": sig}
+    payload_b64 = base64.b64encode(json.dumps(payload).encode()).decode()
+    chunks = [payload_b64[i:i+8] for i in range(0, len(payload_b64), 8)]
+    return "LIC-" + "-".join(chunks)
+
+
+def _check_admin_token(request: Request):
+    token = request.headers.get("X-Admin-Token") or request.query_params.get("admin_token")
+    if not ADMIN_API_KEY or token != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/api/admin/licenses")
+async def admin_list_licenses(request: Request):
+    _check_admin_token(request)
+    return _load_registry()
+
+
+@app.post("/api/admin/issue")
+async def admin_issue_license(request: Request, body: dict):
+    _check_admin_token(request)
+    target_hwid = body.get("target_hwid") or body.get("hwid")
+    days_valid = int(body.get("days_valid", body.get("days", 365)))
+    note = body.get("note", "")
+    if not target_hwid:
+        raise HTTPException(status_code=400, detail="target_hwid is required")
+    key = _build_license(target_hwid, days_valid)
+    record = {
+        "key": key,
+        "hwid": target_hwid,
+        "days_valid": days_valid,
+        "note": note,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    registry = _load_registry()
+    registry["licenses"].append(record)
+    _save_registry(registry)
+    return {"license_key": key, "record": record}
+
+
+@app.post("/api/admin/revoke")
+async def admin_revoke_license(request: Request, body: dict):
+    _check_admin_token(request)
+    target_hwid = body.get("target_hwid") or body.get("hwid")
+    reason = body.get("reason", "")
+    if not target_hwid:
+        raise HTTPException(status_code=400, detail="target_hwid is required")
+    registry = _load_registry()
+    for item in registry.get("licenses", []):
+        if item.get("hwid") == target_hwid:
+            item["revoked_at"] = datetime.now(timezone.utc).isoformat()
+            item["revoke_reason"] = reason
+            registry.setdefault("revoked", []).append(item)
+    _save_registry(registry)
+    return {"status": "revoked", "hwid": target_hwid}
+
+
+@app.delete("/api/admin/licenses")
+async def admin_delete_licenses(request: Request):
+    _check_admin_token(request)
+    _save_registry({"licenses": [], "revoked": []})
+    return {"status": "cleared"}
 
 
 @app.websocket("/ws/market")

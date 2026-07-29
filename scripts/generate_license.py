@@ -76,8 +76,8 @@ def get_hardware_id():
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def generate_license(days_valid: int = 365):
-    hwid = get_hardware_id()
+def generate_license(days_valid: int = 365, target_hwid: str = None, note: str = ""):
+    hwid = target_hwid if target_hwid is not None else get_hardware_id()
     expiry = (datetime.now(timezone.utc) + timedelta(days=days_valid)).isoformat()
     message = f"{hwid}|{expiry}"
     sig = hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).hexdigest()
@@ -94,7 +94,42 @@ def generate_license(days_valid: int = 365):
         f.write(license_key)
     print(f"License saved to {out}")
 
+    registry = {
+        "licenses": [],
+        "revoked": [],
+    }
+    registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend", "licenses_registry.json")
+    if os.path.isfile(registry_path):
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+        except Exception:
+            pass
+    record = {
+        "key": license_key,
+        "hwid": hwid,
+        "days_valid": days_valid,
+        "note": note,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    registry.setdefault("licenses", []).append(record)
+    os.makedirs(os.path.dirname(registry_path), exist_ok=True)
+    with open(registry_path, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, ensure_ascii=False)
+    print(f"Registry updated at {registry_path}")
+
 
 if __name__ == "__main__":
-    days = int(sys.argv[1]) if len(sys.argv) > 1 else 365
-    generate_license(days)
+    args = sys.argv[1:]
+    target_hwid = None
+    note = ""
+    if "--hwid" in args:
+        idx = args.index("--hwid")
+        target_hwid = args[idx + 1]
+        del args[idx:idx + 2]
+    if "--note" in args:
+        idx = args.index("--note")
+        note = args[idx + 1] if idx + 1 < len(args) else ""
+        del args[idx:idx + 2]
+    days = int(args[0]) if args else 365
+    generate_license(days, target_hwid, note)

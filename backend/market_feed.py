@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import ssl
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
 
@@ -19,6 +20,15 @@ TIMEFRAME = os.environ.get("TIMEFRAME", "1m")
 RECONNECT_DELAY_BASE = 1
 RECONNECT_DELAY_MAX = 30
 SIM_FALLBACK_INTERVAL = 30
+
+
+def _create_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    try:
+        ctx.load_default_certs(purpose=ssl.Purpose.SERVER_AUTH)
+    except Exception:
+        pass
+    return ctx
 
 
 class BinanceMarketFeed:
@@ -92,7 +102,8 @@ class BinanceMarketFeed:
         ws_url = f"wss://stream.binance.com:9443/ws/{stream_name}"
         logger.info("Connecting to Binance WebSocket: {}", ws_url)
 
-        async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
+        ssl_context = _create_ssl_context()
+        async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10, ssl=ssl_context) as ws:
             self._consecutive_errors = 0
             self._use_simulation = False
             if self._sim_task:
