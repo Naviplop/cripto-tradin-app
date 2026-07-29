@@ -59,13 +59,15 @@ Es un programa de escritorio para Windows que te ayuda a operar con criptomoneda
 | Feature | Estado actual | ¿Qué falta? |
 |---------|---------------|-------------|
 | **Modelo IA entrenado** | Usa modelo heurístico | Entrenar el modelo ONNX con datos históricos de Binance |
-| **Soporte multi-activo** | Solo BTC/USDT | Agregar ETH, SOL, BNB, XRP |
+| **Backtesting integrado** | Router existe pero no montado | Integrar en API principal y conectar con dominio/riesgo |
+| **Frontend TypeScript** | React + JSX | Migrar a TypeScript strict y arquitectura por capas |
+| **Tests backend >90%** | 16/16 tests básicos | Ampliar cobertura a backtest, IA, repositories, CQRS |
 | **Licencia admin segura** | Token hardcodeado en `.env` | Cambiar `ADMIN_API_KEY` antes de distribuir |
-| **Actualizaciones automáticas** | Configurado pero sin release | Publicar releases en GitHub |
+| **Actualizaciones automáticas** | Configurado sin release | Publicar releases en GitHub |
 | **Certificado Authenticode** | Script listo | Firmar el `.exe` para que Windows no lo marque como "desconocido" |
-| **Tests frontend** | No hay | Agregar tests con Vitest |
-| **Empaquetado optimizado** | `asar` deshabilitado | Habilitar `asar` para reducir tamaño del instalador |
-| **Monitoreo avanzado** | Básico | Agregar métricas y alertas de salud |
+| **Documentación institucional** | Parcial | Agregar USER_MANUAL, SECURITY_AUDIT, ARCHITECTURE, BACKTEST_MANUAL, MLOPS, DEPLOYMENT_ENTERPRISE |
+| **Servidor de licencias central** | No implementado | Implementar `lafm-license-server` con JWT offline 30 días |
+| `asar` en electron-builder | Deshabilitado | Habilitar para reducir tamaño |
 
 ---
 
@@ -153,10 +155,11 @@ curl -H "X-Admin-Token: <tu_token>" http://127.0.0.1:8765/api/admin/licenses
 - Un instalador Windows funcional.
 - Una app de trading con gráficos, señales, órdenes automáticas y paper trading.
 - Sistema de licencias HWID-bound con panel de administración.
-- Documentación completa.
+- Documentación básica lista.
 
-**¿Qué falta para producción?**
+**¿Qué falta para producción institucional?**
 - Entrenar el modelo ONNX real.
-- Cambiar el token admin por uno seguro.
-- Firmar el ejecutable con certificado Authenticode.
-- Publicar releases en GitHub.
+- Completar migración Clean Architecture + SQLAlchemy 2.0 + CQRS.
+- Integrar backtesting y alcanzar cobertura > 90%.
+- Migrar frontend a TypeScript strict.
+- Cambiar token admin, firmar `.exe`, publicar releases y completar documentación enterprise.

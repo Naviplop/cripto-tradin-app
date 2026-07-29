@@ -32,8 +32,11 @@
 │   - SecureStorage (AES-256-GCM)              │
 │   - Admin API (/api/admin/*)                 │
 │   - SQLite persistencia                       │
+│   - Backtest router (/api/backtest/*)         │
 └─────────────────────────────────────────────┘
 ```
+
+**Nota:** Existe una migración parcial hacia Clean Architecture/DDD/CQRS en carpetas `backend/domain/`, `application/`, `infrastructure/`, `presentation/`, pero `main.py` sigue siendo composition root mixto y no toda la nueva capa está cableada aún.
 
 ---
 
@@ -45,8 +48,23 @@
 - **CORS:** Permite orígenes locales (`localhost`, `127.0.0.1`) y `file://` mediante regex. Incluye `FRONTEND_ORIGIN` y desarrollos Vite.
 - **Rate limiting:** `/api/license/validate` limitado a 5 req/min/IP usando `slowapi`.
 - **Excepciones:** Handler global para evitar leakage de información interna.
+- **Compatibility:** Endpoints legacy preservados para no romper el frontend actual.
 
-### 2.2 Endpoints REST
+### 2.2 Capas nuevas (migración en progreso)
+| Capa | Ruta | Estado |
+|------|------|--------|
+| Domain Entities | `backend/domain/entities/*.py` | Parcial: existen Order, Position, Candle, pero hay imports rotos y contratos incompletos |
+| Value Objects | `backend/domain/value_objects/*.py` | Creado, pero sin validaciones exhaustivas |
+| Events | `backend/domain/events/*.py` | Creado, no integrado en handlers |
+| Repositories ABC | `backend/domain/repositories/interfaces.py` | Interfaces declaradas, sin implementación SQLAlchemy 2.0 |
+| Commands | `backend/application/commands/*.py` | Placeholders funcionales limitados |
+| Queries | `backend/application/queries/*.py` | Algunas queries creadas, sin cableado completo |
+| Services | `backend/application/services/*.py` | Orchestration service parcial |
+| Infrastructure | `backend/infrastructure/**/*.py` | IA, market data, security avanzados; falta persistence SQLAlchemy |
+| Presentation routers | `backend/presentation/routers/*.py` | Routers creados, pero `main.py` no monta todos |
+| Config | `backend/config/*.py` | Settings y dependencies parciales |
+
+### 2.3 Endpoints REST
 
 | Método | Ruta | Estado | Notas |
 |--------|------|--------|-------|
@@ -70,14 +88,18 @@
 | POST | `/api/admin/issue` | ✅ Activo | Emite nueva licencia |
 | POST | `/api/admin/revoke` | ✅ Activo | Revoca licencia por HWID |
 | DELETE | `/api/admin/licenses` | ✅ Activo | Limpia registry |
+| POST | `/api/backtest/run` | ⚠️ Parcial | Router existe, no integrado en `main.py` |
+| GET | `/api/backtest/result/{run_id}` | ⚠️ Parcial | Router existe, no integrado en `main.py` |
+| POST | `/api/backtest/optimize` | ⚠️ Parcial | Router existe, no integrado en `main.py` |
+| GET | `/api/backtest/metrics/{run_id}` | ⚠️ Parcial | Router existe, no integrado en `main.py` |
 
-### 2.3 WebSocket (`/ws/market`)
+### 2.4 WebSocket (`/ws/market`)
 - **Estado:** ✅ Activo
 - **Mensajes cliente → servidor:** `ping`
 - **Mensajes servidor → cliente:** `market_data`, `account_update`, `pong`
 - **Reconexión:** Backoff exponencial + jitter en frontend
 
-### 2.4 Motor de Trading (`backend/trading_engine.py`)
+### 2.5 Motor de Trading (`backend/trading_engine.py`)
 - **Modos:** Paper Trading ($10,000 USDT) / Live Trading
 - ** órdenes:** MARKET, LIMIT, STOP_LIMIT, OCO
 - **Señales:** EMA(10/30), RSI(14), MACD(12/26/9), Bollinger Bands, ATR
@@ -86,58 +108,61 @@
 - **Persistencia:** SQLite (`account_snapshots`, `positions`, `trades`, `predictions`, `license_cache`)
 - **Heartbeat:** Snapshots cada 60s
 
-### 2.5 IA / Modelo (`backend/ai_engine.py`)
+### 2.6 IA / Modelo (`backend/ai_engine.py` + `backend/infrastructure/ai/*.py`)
 - **Modelo:** ONNX con `onnxruntime` (CPUExecutionProvider)
-- **Features:** 13 por vela (OHLCV, RSI, MACD, Bollinger, ATR, EMAs, Log Returns)
+- **Features:** 13+ por vela (OHLCV, RSI, MACD, Bollinger, ATR, EMAs, Log Returns)
 - **Ventana:** 30 velas → tensor `[1, 30, 8]`
 - **Fallback:** Heurístico si no existe `.onnx`
-- **Estado actual:** No hay modelo preentrenado en repo; usa fallback heurístico
-
-### 2.6 Feed de Mercado (`backend/market_feed.py`)
-- **Fuente principal:** Binance WebSocket (`wss://stream.binance.com:9443/ws/{symbol}@kline_{timeframe}`)
-- **Cold start:** REST historical klines (200 velas)
-- **SSL:** Contexto SSL robusto para empaquetado
-- **Fallback:** Simulación interna tras 5 errores consecutivos
-- **Reconexión:** Backoff exponencial con max 30s
-
-### 2.7 Licencias (`backend/license_manager.py`)
-- **HWID:** SHA-256 de motherboard + CPU + MAC + hostname
-- **Firma:** HMAC-SHA256 de `{hwid}|{expiry}`
-- **Validación:** Local, 100% offline
-- **Formato:** `LIC-{base64_chunk_8}-...`
-- **Registro:** `backend/licenses_registry.json` (emitidas/revocadas)
-- **Admin API:** Protegida por `ADMIN_API_KEY` (header o query param)
-
-### 2.8 Seguridad (`backend/secure_storage.py`)
-- **Cifrado:** AES-256-GCM
-- **Derivación:** HWID-bound key material
-- **Almacenamiento:** SQLite en `%APPDATA%/LAFM/secure.db`
-- **Hardening:** Zeroización de secrets en memoria
-
-### 2.9 Logging (`backend/logger.py`)
-- **Framework:** loguru
-- **Rotación:** 10 MB
-- **Retención:** 30 días
-- **Compresión:** gzip
-
-### 2.10 Empaquetado
-- **Backend EXE:** `backend/dist/trading_app.exe` (~142 MB)
-- **Instalador:** `dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe` (~214 MB)
-- **Builder:** PyInstaller + electron-builder (NSIS)
-- **Icono:** `assets/icon.png` (256×256)
+- **Estado actual:** Motor multi-modelo avanzado en `infrastructure/ai/` existe, pero no integrado en risk/backtesting ni tests 90%.
+- **Modelo ONNX real:** No incluido en repo.
 
 ---
 
-## 3. Frontend — Estado Detallado
+## 3. Backtesting y Optimización Cuant
 
-### 3.1 Stack
+### 3.1 Estado actual
+- Módulos creados en `backend/backtest/`: `engine.py`, `portfolio.py`, `metrics.py`, `optimization.py`, `data.py`, `api_routes.py`, `schemas.py`.
+- Router FastAPI en `/api/backtest/*` existe pero **no está montado en `main.py`**.
+- Sin tests unitarios/integración garantizados.
+- No integrado con dominio/riesgo ni ejecución real.
+
+### 3.2 Hace falta
+- Integrar router en `main.py`.
+- Alinear contratos Pydantic v2 y limpiar imports rotos (`BacktestMetrics`).
+- Reutilizar entidades de dominio (`Trade`, `Position`, `Candle`, `Money`).
+- Añadir tests y validar métricas estadísticas.
+
+---
+
+## 4. Estado de la Documentación y Documentos Pendientes
+
+### 4.1 Documentación actualizada
+- `docs/PR_SUMMARY.md` — resumen ejecutable de entregas.
+- `docs/USER_STATUS.md` — estado para no técnicos.
+- `docs/LICENSE_DISTRIBUTION.md` — flujo end-to-end de licencias.
+- `docs/API_KEYS_SECURITY.md` — CORS y hardening.
+- `README.md` — actualizado con owner workflow y admin API.
+
+### 4.2 Documentación faltante (requerida para producción institucional)
+- `docs/USER_MANUAL.md` — actualizar a nuevas pantallas y flujo HWID/Admin API.
+- `docs/SECURITY_AUDIT.md` — detalle de defensas Zero Trust, zeroize, CORS, rate limiting.
+- `docs/ARCHITECTURE.md` — diagramas C4/DDD/CQRS con Mermaid, flujos WS, ONNX, licencias.
+- `docs/BACKTEST_MANUAL.md` — guía de uso del motor de backtesting y optimización.
+- `docs/MLOPS.md` — pipeline de entrenamiento, versionado, hot-update, monitoreo.
+- `docs/DEPLOYMENT_ENTERPRISE.md` — guía de release, Authenticode, canales Stable/Beta.
+
+---
+
+## 5. Frontend — Estado Detallado
+
+### 5.1 Stack
 - **Framework:** React 18 + Vite
 - **Estilos:** Tailwind CSS 3
 - **Charts:** Lightweight Charts 4
 - **Animaciones:** Framer Motion (onboarding)
 - **Estado global:** Zustand
 
-### 3.2 Componentes
+### 5.2 Componentes
 
 | Componente | Estado | Notas |
 |------------|--------|-------|
@@ -150,31 +175,30 @@
 | `Onboarding.jsx` | ✅ Activo | Wizard 4 pasos + validación API keys |
 | `SplashScreen.jsx` | ✅ Activo | Splash inicial animado |
 
-### 3.3 Estado de la UI
-- **Onboarding:** ✅ Completo
-- **License gate:** ✅ Muestra HWID copiable
-- **Conexión WS:** ✅ Reconexión con backoff exponencial + jitter
-- **Fetch timeout:** ✅ 10s con AbortController
-- **Carga/Error states:** ✅ En todas las llamadas API
+### 5.3 Limitaciones actuales
+- **TypeScript strict:** No migrado. Todo en `.jsx`/`.js` actualmente.
+- **Arquitectura por capas:** No implementada; componentes en `components/` y estado global en `store.js` sin slices tipados.
+- **HexagonFragmentWidget / Docking Layout:** No implementados.
+- **Tests frontend:** No existen.
 
 ---
 
-## 4. Electron Wrapper
+## 6. Electron Wrapper
 
-### 4.1 Main Process (`electron/main.js`)
+### 6.1 Main Process (`electron/main.js`)
 - **Spawn backend:** Ejecuta `trading_app.exe` o `python main.py` según empaquetado
 - **Lifecycle:** Limpia backend al cerrar ventana
 - **Actualizaciones:** `electron-updater` apunta a GitHub Releases
 - **Seguridad:** `contextIsolation: true`, `nodeIntegration: false`, navegación restringida
 
-### 4.2 Preload (`electron/preload.js`)
+### 6.2 Preload (`electron/preload.js`)
 - **Exposición segura:** IPC para seleccionar archivo de licencia
 
 ---
 
-## 5. Licencias — Flujo Completo
+## 7. Licencias — Flujo Completo
 
-### 5.1 Usuario Final
+### 7.1 Usuario Final
 1. Instala app
 2. Abre `http://127.0.0.1:8765/api/health` para obtener HWID
 3. Comparte HWID con LAFM
@@ -182,7 +206,7 @@
 5. Pega clave en app → valida backend localmente
 6. App desbloqueada
 
-### 5.2 Owner/LAFM
+### 7.2 Owner/LAFM
 ```powershell
 cd scripts
 python generate_license.py 365                          # propia máquina
@@ -190,29 +214,32 @@ python generate_license.py --hwid <HWID> 365            # máquina de amigo
 python generate_license.py --hwid <HWID> 30 --note "trial"  # trial
 ```
 
-### 5.3 Admin API (Owner)
+### 7.3 Admin API (Owner)
 ```powershell
 curl -H "X-Admin-Token: <token>" http://127.0.0.1:8765/api/admin/licenses
 curl -X POST -H "Content-Type: application/json" -H "X-Admin-Token: <token>" http://127.0.0.1:8765/api/admin/issue -d "{\"target_hwid\":\"<hwid>\",\"days_valid\":365}"
 curl -X POST -H "Content-Type: application/json" -H "X-Admin-Token: <token>" http://127.0.0.1:8765/api/admin/revoke -d "{\"target_hwid\":\"<hwid>\",\"reason\":\"...\"}"
 ```
 
+**Nota:** Persistencia de licencias avanzada con JWT offline 30 días requiere `lafm-license-server` completo; actualmente no implementado.
+
 ---
 
-## 6. Tests
+## 8. Tests
 
-### 6.1 Backend (`pytest`)
+### 8.1 Backend (`pytest`)
 - `test_trading_engine.py` — 6 tests: PnL, TP/SL, limit orders, snapshots, signals
 - `test_license_manager.py` — 5 tests: HWID, validación, expiración, formato
 - `test_ai_engine.py` — 4 tests: fallback, bullish/bearish bias
-- **Total:** 16/16 passing
+- `test_backtest.py` — presente pero sin ejecución garantizada
+- **Cobertura actual:** < 90%. **Objetivo institucional:** > 90%.
 
-### 6.2 Frontend
+### 8.2 Frontend
 - Sin tests automatizados actualmente
 
 ---
 
-## 7. CI/CD
+## 9. CI/CD
 
 - **Pipeline:** `.github/workflows/security_audit.yml`
 - **SAST:** Bandit (Python)
@@ -222,35 +249,46 @@ curl -X POST -H "Content-Type: application/json" -H "X-Admin-Token: <token>" htt
 - **Gate:** pytest + electron build
 - **Auto-updates:** electron-updater configurado
 
+**Hace falta:** cobertura backend > 90%, tests frontend vitest, firma Authenticode, publicar releases.
+
 ---
 
-## 8. Issues Conocidos
+## 10. Issues Conocidos
 
 | ID | Descripción | Severidad | Estado |
 |----|-------------|-----------|--------|
-| ISS-01 | WebSocket SSL verify falla en algunas redes Windows | Media | ⚠️ Parcialmente mitigado con SSL context; puede requerir `REQUESTS_CA_BUNDLE` o instalación de certs |
-| ISS-02 | No hay modelo ONNX preentrenado en repo | Media | ⚠️ Usa fallback heurístico; script de entrenamiento listo |
-| ISS-03 | `datetime.utcnow()` deprecado | Baja | ⚠️ Advertido en warnings; reemplazar por `datetime.now(timezone.utc)` |
-| ISS-04 | Faltan tests frontend | Baja | ⚠️ No bloqueaRelease |
-| ISS-05 | Electron `asar` deshabilitado | Baja | ⚠️ Recomendado habilitar para producción |
-| ISS-06 | Falta `ADMIN_API_KEY` en `.env` de producción | Media | ⚠️ Owner debe cambiarlo antes de distribuir |
-| ISS-07 | Rate limiter usa IP interna en loopback | Baja | ⚠️ En producción remota funciona correctamente |
+| ISS-01 | WebSocket SSL verify falla en algunas redes Windows | Media | ⚠️ Mitigado con SSL context; puede requerir certs |
+| ISS-02 | No hay modelo ONNX preentrenado en repo | Media | ⚠️ Usa fallback heurístico |
+| ISS-03 | `datetime.utcnow()` deprecado | Baja | ⚠️ Reemplazar por `datetime.now(timezone.utc)` |
+| ISS-04 | Sin tests frontend | Baja | ⚠️ No bloquea release |
+| ISS-05 | Electron `asar` deshabilitado | Baja | ⚠️ Habilitar para producción |
+| ISS-06 | Falta `ADMIN_API_KEY` seguro en `.env` producción | Media | ⚠️ Owner debe cambiarlo |
+| ISS-07 | Rate limiter usa IP interna en loopback | Baja | ⚠️ Producción remota funciona |
 | ISS-08 | `ta` no es hidden import en PyInstaller | Baja | ⚠️ No crítico |
-| ISS-09 | WebSocket usa `on_event` deprecated | Baja | ⚠️ Migrar a lifespan handlers |
+| ISS-09 | `on_event` deprecated → lifespan | Baja | ⚠️ Migrar |
+| ISS-10 | Migración Clean Architecture incompleta | Alta | ⚠️ main.py mixto, routers no cableados |
+| ISS-11 | Backtest no integrado en API principal | Alta | ⚠️ Router existe, no montado |
+| ISS-12 | Repositorios SQLAlchemy 2.0 ausentes | Alta | ⚠️ Falta implementación concreta |
+| ISS-13 | Faltan docs USER_MANUAL, SECURITY_AUDIT, ARCHITECTURE | Media | ⚠️ Bloquea release institucional |
 
 ---
 
-## 9. Tareas Pendientes
+## 11. Tareas Pendientes
 
 | # | Tarea | Prioridad |
 |---|-------|-----------|
 | 1 | Entrenar modelo ONNX real con datos Binance | Alta |
-| 2 | Habilitar `asar` en electron-builder | Media |
-| 3 | Migrar `on_event` a lifespan handlers | Media |
-| 4 | Reemplazar `datetime.utcnow()` por `datetime.now(timezone.utc)` | Baja |
-| 5 | Agregar tests frontend (vitest) | Baja |
-| 6 | Agregar `ADMIN_API_KEY` seguro en `.env` producción | Alta |
-| 7 | Documentar proceso de actualización de modelo ONNX | Media |
-| 8 | Agregar soporte multi-asset (ETH, SOL, BNB, XRP) | Media |
-| 9 | Implementar circuito breaker en simulation fallback | Media |
-| 10 | Agregar métricas y monitoreo (Prometheus/healthchecks) | Baja |
+| 2 | Completar migración Clean Architecture: main.py composition root + lifespan | Alta |
+| 3 | Implementar repositorios SQLAlchemy 2.0 + unit of work | Alta |
+| 4 | Integrar router `/api/backtest/*` en `main.py` y alinear Pydantic v2 | Alta |
+| 5 | Alcanzar cobertura backend > 90% con pytest | Alta |
+| 6 | Cambiar `ADMIN_API_KEY` en `.env` producción | Alta |
+| 7 | Firmar ejecutable con Authenticode | Media |
+| 8 | Migrar frontend a TypeScript strict Clean Architecture | Media |
+| 9 | Habilitar `asar` en electron-builder | Media |
+| 10 | Implementar `lafm-license-server` con JWT offline 30 días | Media |
+| 11 | Agregar tests frontend (vitest) | Baja |
+| 12 | Documentar pipeline MLOps y release enterprise | Baja |
+| 13 | Soporte multi-asset (ETH, SOL, BNB, XRP) | Media |
+| 14 | Implementar circuito breaker en simulation fallback | Baja |
+| 15 | Agregar métricas y monitoreo | Baja |
