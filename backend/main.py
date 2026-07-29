@@ -1,64 +1,72 @@
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
-from collections import deque
+from typing import Any, List
 
-from dotenv import load_dotenv
-
-
-def load_env() -> None:
-    candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"),
-    ]
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        candidates.extend(
-            [
-                os.path.join(sys._MEIPASS, ".env"),
-                os.path.join(sys._MEIPASS, "..", ".env"),
-                os.path.join(os.path.dirname(sys.executable), ".env"),
-            ]
-        )
-    for path in candidates:
-        if os.path.isfile(path):
-            load_dotenv(path, override=False)
-            break
-
-
-load_env()
-
-import pandas as pd
-import pandas_ta as ta
-import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from uvicorn import Config, Server
 
-from trading_engine import TradingEngine, OrderSide, OrderType, Candle
-from license_manager import LicenseManager
-from market_feed import BinanceMarketFeed
-from secure_storage import save_api_keys, load_api_keys, clear_api_keys
-from ai_engine import AIPredictor
-from logger import logger
+from config.settings import get_settings
+from domain.entities.candle import Candle
+from domain.entities.order import OrderSide
+from domain.events import OrderPlaced, PositionClosed
+from domain.repositories.interfaces import (
+    IAccountRepository,
+    ILicenseRepository,
+    IMarketDataRepository,
+    IModelRepository,
+    IPositionRepository,
+    ITradeRepository,
+)
+from domain.services import RiskEngine
+from domain.value_objects.money import Money
+from infrastructure.ai.onnx_runtime import ONNXInferenceEngine
+from infrastructure.market_data.binance_ws import BinanceMarketFeed
+from infrastructure.security.hwid import get_hardware_id
+from infrastructure.security.license_crypto import validate_license_key
+from presentation.middlewares.exception_handlers import register_exception_handlers
+from presentation.routers import (
+    admin_router,
+    auth_router,
+    config_router,
+    health_router,
+    license_router,
+    market_router,
+    model_router,
+    trading_commands_router,
+    trading_queries_router,
+)
+from backtest.api_routes import router as backtest_router
+
+logger = logging.getLogger(__name__)
+
+settings = get_settings()
+
+app_state: dict[str, Any] = {}
 
 
-def get_base_path() -> str:
+def _get_base_path() -> str:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
 
-BASE_PATH = get_base_path()
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
-EXTRA_CORS_ORIGINS = [origin.strip() for origin in os.environ.get("EXTRA_CORS_ORIGINS", "").split(",") if origin.strip()]
+BASE_PATH = _get_base_path()
+FRONTEND_ORIGIN = settings.frontend_origin
+EXTRA_CORS_ORIGINS = [o.strip() for o in settings.extra_cors_origins.split(",") if o.strip()]
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -69,214 +77,388 @@ DEV_ORIGINS = [
     "http://localhost:8765",
     "http://127.0.0.1:8765",
 ]
-CORS_REGEX = os.environ.get("CORS_REGEX", r"^http://(localhost|127\.0\.0\.1)(:\d+)?$|^null$")
-
-TRADING_APP_DATA_DIR = os.environ.get("TRADING_APP_DATA_DIR") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LAFM")
+ALL_CORS_ORIGINS = [FRONTEND_ORIGIN] + EXTRA_CORS_ORIGINS + DEV_ORIGINS
+TRADING_APP_DATA_DIR = settings.trading_app_data_dir or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LAFM")
 LICENSE_REGISTRY_PATH = os.path.join(TRADING_APP_DATA_DIR, "licenses_registry.json")
-ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
-
+ADMIN_API_KEY = settings.admin_api_key
 os.makedirs(TRADING_APP_DATA_DIR, exist_ok=True)
 
-trading_engine = TradingEngine(initial_balance=10000.0)
-license_manager = LicenseManager()
-market_feed_instance: Optional[BinanceMarketFeed] = None
-active_connections: List[WebSocket] = []
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Crypto Trading Engine")
-app.state.limiter = limiter
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=CORS_REGEX,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=600,
-)
-app.add_middleware(SlowAPIMiddleware)
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception: {}", exc)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+async def _broadcast_market_data(candle: Candle, signals: dict) -> None:
+    for ws in list(app_state.get("market_connections", [])):
+        try:
+            await ws.send_json({
+                "type": "market_data",
+                "candle": {
+                    "time": candle.timestamp.isoformat(),
+                    "open": candle.open.to_float(),
+                    "high": candle.high.to_float(),
+                    "low": candle.low.to_float(),
+                    "close": candle.close.to_float(),
+                    "volume": candle.volume,
+                },
+                "signals": signals,
+            })
+        except Exception:
+            if ws in app_state.get("market_connections", []):
+                app_state["market_connections"].remove(ws)
 
 
-class LicenseRequest(BaseModel):
-    license_key: str
+async def _broadcast_account_update(account_data: dict) -> None:
+    for ws in list(app_state.get("market_connections", [])):
+        try:
+            await ws.send_json({
+                "type": "account_update",
+                "data": account_data,
+            })
+        except Exception:
+            if ws in app_state.get("market_connections", []):
+                app_state["market_connections"].remove(ws)
 
 
-class ApiKeyRequest(BaseModel):
-    api_key: str
-    api_secret: str
-    paper_mode: bool = True
+class _SimpleEngine:
+    def __init__(self) -> None:
+        self.balance = 10000.0
+        self.initial_balance = 10000.0
+        self.positions: list = []
+        self.orders: list = []
+        self.trade_history: list = []
+        self.candles: list = []
+        self.running = False
+        self.broadcast_market = None
+        self.broadcast_account = None
+        self.order_counter = 0
+        self.trade_counter = 0
+        self.current_price = 0.0
+        self.signal_state = {
+            "ma_fast": 0,
+            "ma_slow": 0,
+            "rsi": 50,
+            "signal": "NEUTRAL",
+            "current_price": 0.0,
+            "atr": 0.0,
+        }
+        self.ai_predictor = ONNXInferenceEngine()
 
+    def get_account_summary(self) -> dict:
+        total_unrealized = sum(p.get("unrealized_pnl", 0.0) for p in self.positions)
+        return {
+            "balance": self.balance,
+            "initial_balance": self.initial_balance,
+            "unrealized_pnl": total_unrealized,
+            "total_equity": self.balance + total_unrealized,
+            "positions_count": len(self.positions),
+        }
 
-class OrderRequest(BaseModel):
-    side: str
-    order_type: str
-    quantity: float
-    price: Optional[float] = None
-    tp: Optional[float] = None
-    sl: Optional[float] = None
-    stop_price: Optional[float] = None
-    limit_price: Optional[float] = None
+    def get_positions(self) -> list:
+        return self.positions
 
+    def get_trade_history(self) -> list:
+        return [
+            {
+                "id": t.id,
+                "side": t.side.value,
+                "entry_price": t.entry_price.to_float(),
+                "exit_price": t.exit_price.to_float(),
+                "quantity": t.quantity,
+                "pnl": t.pnl.to_float(),
+                "timestamp": t.timestamp.isoformat(),
+            }
+            for t in self.trade_history
+        ]
 
-class ModelUpdateRequest(BaseModel):
-    download_url: str
-    version: Optional[str] = None
+    def place_order(self, side, order_type, quantity, price=None, tp=None, sl=None, stop_price=None, limit_price=None) -> dict:
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
+        if order_type == OrderType.LIMIT and price is None:
+            raise ValueError("Limit orders require a price")
+        if order_type == OrderType.STOP_LIMIT and (stop_price is None or limit_price is None):
+            raise ValueError("Stop-Limit orders require stop_price and limit_price")
+        if order_type == OrderType.OCO and (price is None or limit_price is None):
+            raise ValueError("OCO orders require a price and limit_price")
 
+        self.order_counter += 1
+        order = {
+            "id": f"ORD-{self.order_counter:06d}",
+            "side": side.value,
+            "order_type": order_type.value,
+            "quantity": quantity,
+            "price": price or limit_price,
+            "tp": tp,
+            "sl": sl,
+            "stop_price": stop_price,
+            "limit_price": limit_price,
+            "status": "PENDING",
+        }
+        self.orders.append(order)
 
-@app.get("/api/market/ticker")
-async def market_ticker():
-    symbol = os.environ.get("SYMBOL", "BTCUSDT")
-    url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    return {
-        "symbol": data.get("symbol"),
-        "price": float(data.get("lastPrice", 0)),
-        "priceChangePercent": float(data.get("priceChangePercent", 0)),
-        "high": float(data.get("highPrice", 0)),
-        "low": float(data.get("lowPrice", 0)),
-        "volume": float(data.get("volume", 0)),
-        "quoteVolume": float(data.get("quoteVolume", 0)),
-    }
+        if order_type == OrderType.MARKET:
+            order["status"] = "FILLED"
+            order["filled_price"] = self.current_price
+            position = {
+                "side": side.value,
+                "entry_price": self.current_price,
+                "quantity": quantity,
+                "tp": tp,
+                "sl": sl,
+                "unrealized_pnl": 0.0,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            self.positions.append(position)
+            logger.info(f"Market order filled: {order['id']} at {self.current_price}")
+        elif order_type == OrderType.LIMIT:
+            order["status"] = "PENDING"
+            logger.info(f"Limit order placed: {order['id']} at {price}")
+        elif order_type == OrderType.STOP_LIMIT:
+            order["status"] = "PENDING"
+            logger.info(f"Stop-Limit order placed: {order['id']} stop={stop_price} limit={limit_price}")
+        elif order_type == OrderType.OCO:
+            order["status"] = "PENDING"
+            logger.info(f"OCO order placed: {order['id']} price={price} limit={limit_price}")
 
+        return order
 
-@app.get("/api/market/orderbook")
-async def market_orderbook(limit: int = 50):
-    symbol = os.environ.get("SYMBOL", "BTCUSDT")
-    url = f"https://api.binance.com/api/v3/depth?symbol={symbol}&limit={limit}"
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    def close_position(self, position: dict) -> None:
+        pnl = 0.0
+        if position["side"] == "BUY":
+            pnl = (self.current_price - position["entry_price"]) * position["quantity"]
+        else:
+            pnl = (position["entry_price"] - self.current_price) * position["quantity"]
 
-
-@app.get("/api/market/klines")
-async def market_klines(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 200):
-    return trading_engine.get_candles(symbol=symbol, interval=interval, limit=limit)
-
-
-@app.get("/api/health")
-async def health():
-    return {
-        "status": "ok",
-        "license_valid": license_manager.is_valid(),
-        "hwid": license_manager.get_hardware_id()
-    }
-
-
-@app.options("/api/license/validate")
-async def validate_license_options():
-    return JSONResponse(content={"detail": "OK"}, status_code=200)
-
-
-@app.post("/api/license/validate")
-@limiter.limit("5/minute")
-async def validate_license(request: Request, body: LicenseRequest):
-    valid = license_manager.validate(body.license_key)
-    return {"valid": valid, "message": "License valid" if valid else "Invalid or expired license"}
-
-
-@app.get("/api/account/balance")
-async def get_balance():
-    return trading_engine.get_account_summary()
-
-
-@app.get("/api/account/positions")
-async def get_positions():
-    return trading_engine.get_positions()
-
-
-@app.get("/api/account/history")
-async def get_history():
-    return trading_engine.get_trade_history()
-
-
-@app.post("/api/trading/order")
-async def place_order(request: OrderRequest):
-    try:
-        order = trading_engine.place_order(
-            side=OrderSide(request.side.upper()),
-            order_type=OrderType(request.order_type.upper()),
-            quantity=request.quantity,
-            price=request.price,
-            tp=request.tp,
-            sl=request.sl,
-            stop_price=request.stop_price,
-            limit_price=request.limit_price,
+        self.balance += pnl
+        self.trade_counter += 1
+        trade = Trade(
+            id=f"TRD-{self.trade_counter:06d}",
+            side=OrderSide(position["side"]),
+            entry_price=Money(position["entry_price"]),
+            exit_price=Money(self.current_price),
+            quantity=position["quantity"],
+            pnl=Money(pnl),
         )
-        return {"success": True, "order": order}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        self.trade_history.append(trade)
+        self.positions.remove(position)
+        logger.info(f"Position closed: {trade.id} PnL: {pnl:.2f}")
+
+    def update_positions(self) -> None:
+        if not self.positions or self.current_price <= 0:
+            return
+        for position in list(self.positions):
+            pnl = 0.0
+            if position["side"] == "BUY":
+                pnl = (self.current_price - position["entry_price"]) * position["quantity"]
+                position["unrealized_pnl"] = pnl
+                if position.get("tp") and self.current_price >= position["tp"]:
+                    logger.info(f"Take-Profit hit at {self.current_price}")
+                    self.close_position(position)
+                elif position.get("sl") and self.current_price <= position["sl"]:
+                    logger.info(f"Stop-Loss hit at {self.current_price}")
+                    self.close_position(position)
+            else:
+                pnl = (position["entry_price"] - self.current_price) * position["quantity"]
+                position["unrealized_pnl"] = pnl
+                if position.get("tp") and self.current_price <= position["tp"]:
+                    logger.info(f"Take-Profit hit at {self.current_price}")
+                    self.close_position(position)
+                elif position.get("sl") and self.current_price >= position["sl"]:
+                    logger.info(f"Stop-Loss hit at {self.current_price}")
+                    self.close_position(position)
+
+    def _generate_signals(self) -> tuple:
+        if len(self.candles) < 30:
+            self.signal_state = {"signal": "NEUTRAL", "ma_fast": 0, "ma_slow": 0, "rsi": 50, "ai_probability": 0.5, "combined_signal": "NEUTRAL"}
+            return self.signal_state, []
+
+        df_rows = [
+            {"time": c.timestamp, "open": c.open.to_float(), "high": c.high.to_float(), "low": c.low.to_float(), "close": c.close.to_float(), "volume": c.volume}
+            for c in self.candles
+        ]
+        import pandas as pd
+        import numpy as np
+        import pandas_ta as ta
+
+        df = pd.DataFrame(df_rows)
+        df.set_index("time", inplace=True)
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
+
+        df.ta.ema(length=10, append=True)
+        df.ta.ema(length=30, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.macd(append=True)
+        df.ta.bbands(length=20, append=True)
+        df.ta.atr(length=14, append=True)
+        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
+        df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        df.dropna(inplace=True)
+
+        def _rename(prefix, target):
+            matches = [c for c in df.columns if str(c).startswith(prefix)]
+            if matches:
+                df.rename(columns={matches[0]: target}, inplace=True)
+
+        _rename("EMA_10", "ema_fast")
+        _rename("EMA_30", "ema_slow")
+        _rename("RSI_14", "rsi")
+        _rename("MACD_12_26_9", "macd")
+        _rename("MACDs_12_26_9", "macd_signal")
+        _rename("MACDh_12_26_9", "macd_hist")
+        _rename("BBL_", "bb_lower")
+        _rename("BBM_", "bb_mid")
+        _rename("BBU_", "bb_upper")
+        _rename("ATRr_", "atr")
+
+        if df.empty or "ema_fast" not in df.columns or "ema_slow" not in df.columns or "rsi" not in df.columns:
+            self.signal_state = {"signal": "NEUTRAL", "ma_fast": 0, "ma_slow": 0, "rsi": 50, "ai_probability": 0.5, "combined_signal": "NEUTRAL"}
+            return self.signal_state, []
+
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) >= 2 else latest
+        ma_fast = float(latest["ema_fast"])
+        ma_slow = float(latest["ema_slow"])
+        rsi = float(latest["rsi"])
+
+        signal = "NEUTRAL"
+        if prev["ema_fast"] <= prev["ema_slow"] and latest["ema_fast"] > latest["ema_slow"] and rsi < 70:
+            signal = "BUY"
+        elif prev["ema_fast"] >= prev["ema_slow"] and latest["ema_fast"] < latest["ema_slow"] and rsi > 30:
+            signal = "SELL"
+
+        enriched = []
+        for _, row in df.iterrows():
+            enriched.append({
+                "close": float(row["close"]),
+                "volume": float(row["volume"]),
+                "rsi": float(row.get("rsi", 50.0)),
+                "macd": float(row.get("macd", 0.0)),
+                "macd_signal": float(row.get("macd_signal", 0.0)),
+                "macd_hist": float(row.get("macd_hist", 0.0)),
+                "bb_upper": float(row.get("bb_upper", 0.0)),
+                "bb_mid": float(row.get("bb_mid", 0.0)),
+                "bb_lower": float(row.get("bb_lower", 0.0)),
+                "atr": float(row.get("atr", 0.0)),
+                "log_return": float(row.get("log_return", 0.0)),
+                "ema_fast": float(row.get("ema_fast", 0.0)),
+                "ema_slow": float(row.get("ema_slow", 0.0)),
+            })
+
+        self.signal_state = {
+            "ma_fast": round(ma_fast, 2),
+            "ma_slow": round(ma_slow, 2),
+            "rsi": round(rsi, 2),
+            "signal": signal,
+        }
+        return self.signal_state, enriched
+
+    def get_current_signals(self) -> dict:
+        state = dict(self.signal_state)
+        state.setdefault("current_price", self.current_price)
+        state.setdefault("atr", 0.0)
+        return state
+
+    def get_candles(self, symbol="BTCUSDT", interval="1m", limit=200) -> list:
+        seen = set()
+        unique = []
+        for c in list(self.candles):
+            key = c.timestamp.isoformat()
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+        local_candles = unique[-limit:]
+        return [
+            {
+                "time": c.timestamp.isoformat(),
+                "open": c.open.to_float(),
+                "high": c.high.to_float(),
+                "low": c.low.to_float(),
+                "close": c.close.to_float(),
+                "volume": c.volume,
+            }
+            for c in local_candles
+        ]
+
+    async def _process_tick(self, candle: Candle) -> None:
+        self.current_price = candle.close.to_float()
+        if not self.candles or self.candles[-1].timestamp != candle.timestamp:
+            self.candles.append(candle)
+        else:
+            self.candles[-1] = candle
+        self.update_positions()
+        signals, enriched = self._generate_signals()
+        ai_prob = self.ai_predictor.predict(enriched)
+        combined = _combine_signal_with_ai(signals.get("signal", "NEUTRAL"), ai_prob)
+        signals["ai_probability"] = round(ai_prob, 4)
+        signals["combined_signal"] = combined
+        signals["current_price"] = self.current_price
+        latest = enriched[-1] if enriched else {}
+        signals["atr"] = latest.get("atr", 0.0)
+
+        if self.broadcast_market:
+            try:
+                await self.broadcast_market(candle, signals)
+            except Exception as e:
+                logger.error(f"Broadcast error: {e}")
+
+    def stop(self) -> None:
+        self.running = False
+
+    def snapshot_account(self) -> None:
+        pass
+
+    def _notify_account(self) -> None:
+        if self.broadcast_account:
+            try:
+                import asyncio
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.broadcast_account(self.get_account_summary()))
+            except RuntimeError:
+                pass
 
 
-@app.get("/api/trading/signals")
-async def get_signals():
-    signals = trading_engine.get_current_signals()
-    return {"signals": signals}
+def _combine_signal_with_ai(tech_signal: str, ai_prob: float) -> str:
+    if tech_signal == "BUY" and ai_prob > 0.65:
+        return "STRONG_BUY"
+    if tech_signal == "SELL" and ai_prob < 0.35:
+        return "STRONG_SELL"
+    if tech_signal == "BUY" and ai_prob > 0.55:
+        return "BUY"
+    if tech_signal == "SELL" and ai_prob < 0.45:
+        return "SELL"
+    return "NEUTRAL"
 
 
-@app.post("/api/auth/verify-keys")
-async def verify_keys(body: ApiKeyRequest):
-    try:
-        save_api_keys(body.api_key, body.api_secret, body.paper_mode)
-        return {"valid": True}
-    except Exception as e:
-        logger.error("verify_keys failed: %s", repr(e))
-        raise HTTPException(status_code=500, detail=str(e))
+class _LicenseManager:
+    def __init__(self) -> None:
+        self.hwid = get_hardware_id()
+        self.valid = False
+        self.license_data = None
+
+    def get_hardware_id(self) -> str:
+        return self.hwid
+
+    def validate(self, license_key: str) -> bool:
+        if not license_key:
+            return False
+        valid = validate_license_key(license_key)
+        if valid:
+            self.valid = True
+        return valid
+
+    def is_valid(self) -> bool:
+        return self.valid
+
+    def get_license_info(self) -> dict | None:
+        if not self.license_data:
+            return None
+        return {
+            "hwid": self.license_data.get("hwid"),
+            "expiry": self.license_data.get("exp"),
+            "valid": self.valid,
+        }
 
 
-@app.post("/api/config/api-keys")
-async def save_keys(body: ApiKeyRequest):
-    save_api_keys(body.api_key, body.api_secret, body.paper_mode)
-    return {"status": "saved"}
-
-
-@app.get("/api/config/api-keys")
-async def get_keys():
-    keys = load_api_keys()
-    if not keys:
-        return {"api_key": None, "api_secret": None, "paper_mode": True}
-    return keys
-
-
-@app.delete("/api/config/api-keys")
-async def delete_keys():
-    clear_api_keys()
-    return {"status": "cleared"}
-
-
-@app.get("/api/model/status")
-async def model_status():
-    return {
-        "loaded": trading_engine.ai_predictor.is_model_loaded(),
-        "features": getattr(trading_engine.ai_predictor, 'feature_names', []),
-        "window_size": getattr(trading_engine.ai_predictor, 'window_size', 30),
-    }
-
-
-@app.post("/api/model/update")
-async def update_model(body: ModelUpdateRequest):
-    try:
-        import requests
-        resp = requests.get(body.download_url, timeout=30)
-        resp.raise_for_status()
-        user_models_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'LAFM', 'models')
-        os.makedirs(user_models_dir, exist_ok=True)
-        model_path = os.path.join(user_models_dir, 'trading_model.onnx')
-        with open(model_path, 'wb') as f:
-            f.write(resp.content)
-        trading_engine.ai_predictor._load_model()
-        return {"status": "updated", "path": model_path, "loaded": trading_engine.ai_predictor.is_model_loaded()}
-    except Exception as exc:
-        logger.error("Model update failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+license_manager = _LicenseManager()
 
 
 def _load_registry() -> dict:
@@ -296,163 +478,82 @@ def _save_registry(data: dict) -> None:
 
 
 def _build_license(target_hwid: str, days_valid: int = 365) -> str:
-    expiry = (datetime.now(timezone.utc) + timedelta(days=days_valid)).isoformat()
-    message = f"{target_hwid}|{expiry}"
-    sig = hmac.new(LICENSE_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
-    payload = {"hwid": target_hwid, "exp": expiry, "sig": sig}
-    payload_b64 = base64.b64encode(json.dumps(payload).encode()).decode()
-    chunks = [payload_b64[i:i+8] for i in range(0, len(payload_b64), 8)]
-    return "LIC-" + "-".join(chunks)
+    from infrastructure.security.license_crypto import build_license
+    return build_license(target_hwid, days_valid)
 
 
-def _check_admin_token(request: Request):
+def _check_admin_token(request: Request) -> None:
     token = request.headers.get("X-Admin-Token") or request.query_params.get("admin_token")
     if not ADMIN_API_KEY or token != ADMIN_API_KEY:
+        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@app.get("/api/admin/licenses")
-async def admin_list_licenses(request: Request):
-    _check_admin_token(request)
-    return _load_registry()
+trading_engine = _SimpleEngine()
 
 
-@app.post("/api/admin/issue")
-async def admin_issue_license(request: Request, body: dict):
-    _check_admin_token(request)
-    target_hwid = body.get("target_hwid") or body.get("hwid")
-    days_valid = int(body.get("days_valid", body.get("days", 365)))
-    note = body.get("note", "")
-    if not target_hwid:
-        raise HTTPException(status_code=400, detail="target_hwid is required")
-    key = _build_license(target_hwid, days_valid)
-    record = {
-        "key": key,
-        "hwid": target_hwid,
-        "days_valid": days_valid,
-        "note": note,
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-    }
-    registry = _load_registry()
-    registry["licenses"].append(record)
-    _save_registry(registry)
-    return {"license_key": key, "record": record}
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> Any:
+    app_state["market_feed"] = None
+    app_state["market_connections"] = []
+    yield
+    if app_state.get("market_feed"):
+        await app_state["market_feed"].stop()
+    trading_engine.stop()
+    logger.info("Trading Engine stopped.")
 
 
-@app.post("/api/admin/revoke")
-async def admin_revoke_license(request: Request, body: dict):
-    _check_admin_token(request)
-    target_hwid = body.get("target_hwid") or body.get("hwid")
-    reason = body.get("reason", "")
-    if not target_hwid:
-        raise HTTPException(status_code=400, detail="target_hwid is required")
-    registry = _load_registry()
-    for item in registry.get("licenses", []):
-        if item.get("hwid") == target_hwid:
-            item["revoked_at"] = datetime.now(timezone.utc).isoformat()
-            item["revoke_reason"] = reason
-            registry.setdefault("revoked", []).append(item)
-    _save_registry(registry)
-    return {"status": "revoked", "hwid": target_hwid}
+app = FastAPI(title="Crypto Trading Engine", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=settings.cors_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
+)
+
+register_exception_handlers(app)
 
 
-@app.delete("/api/admin/licenses")
-async def admin_delete_licenses(request: Request):
-    _check_admin_token(request)
-    _save_registry({"licenses": [], "revoked": []})
-    return {"status": "cleared"}
+app.include_router(health_router, prefix="/api", tags=["health"])
+app.include_router(market_router, prefix="/api/market", tags=["market"])
+app.include_router(trading_commands_router, prefix="/api/trading", tags=["trading"])
+app.include_router(trading_queries_router, prefix="/api/account", tags=["account"])
+app.include_router(license_router, prefix="/api/license", tags=["license"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(config_router, prefix="/api/config", tags=["config"])
+app.include_router(model_router, prefix="/api/model", tags=["model"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
 
 
 @app.websocket("/ws/market")
-async def websocket_market(websocket: WebSocket):
+async def websocket_market(websocket: WebSocket) -> None:
     await websocket.accept()
-    active_connections.append(websocket)
+    app_state["market_connections"].append(websocket)
     logger.info("WebSocket client connected")
-
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
             if message.get("type") == "ping":
-                 await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
+                await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        if websocket in app_state["market_connections"]:
+            app_state["market_connections"].remove(websocket)
         logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-        if websocket in active_connections:
-            active_connections.remove(websocket)
+        if websocket in app_state["market_connections"]:
+            app_state["market_connections"].remove(websocket)
 
 
-async def broadcast_market_data(candle: Candle, signals: dict):
-    if not active_connections:
-        return
-    payload = {
-        "type": "market_data",
-        "candle": {
-            "time": candle.timestamp.isoformat(),
-            "open": candle.open,
-            "high": candle.high,
-            "low": candle.low,
-            "close": candle.close,
-            "volume": candle.volume,
-        },
-        "signals": signals,
-    }
-    disconnected = []
-    for connection in active_connections:
-        try:
-            await connection.send_json(payload)
-        except Exception:
-            disconnected.append(connection)
-    for conn in disconnected:
-        if conn in active_connections:
-            active_connections.remove(conn)
-
-
-async def broadcast_account_update(account_data: dict):
-    if not active_connections:
-        return
-    payload = {
-        "type": "account_update",
-        "data": account_data,
-    }
-    disconnected = []
-    for connection in active_connections:
-        try:
-            await connection.send_json(payload)
-        except Exception:
-            disconnected.append(connection)
-    for conn in disconnected:
-        if conn in active_connections:
-            active_connections.remove(conn)
-
-
-trading_engine.set_broadcaster(broadcast_market_data, broadcast_account_update)
-
-market_feed: Optional[BinanceMarketFeed] = None
-
-@app.on_event("startup")
-async def startup_event():
-    global market_feed
-    logger.info("Starting Crypto Trading Engine...")
-    if not license_manager.is_valid():
-        logger.warning("No valid license found. Application may have limited functionality.")
-    market_feed = BinanceMarketFeed(on_candle=trading_engine._process_tick)
-    await market_feed.start()
-    asyncio.create_task(snapshot_worker())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global market_feed
-    if market_feed:
-        await market_feed.stop()
-    trading_engine.stop()
-    logger.info("Trading Engine stopped.")
-
-
-async def snapshot_worker():
+async def snapshot_worker() -> None:
     while True:
         await asyncio.sleep(60)
         try:
@@ -462,5 +563,11 @@ async def snapshot_worker():
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 8765)))
+    uvicorn_config = Config(
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+    )
+    server = Server(uvicorn_config)
+    asyncio.run(server.serve())
