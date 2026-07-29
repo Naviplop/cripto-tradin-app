@@ -91,7 +91,7 @@ To switch modes, open **Settings** in the Trading Panel and toggle **Auto-Execut
 
 ---
 
-## 4. Managing API Keys
+## 6. Managing API Keys
 
 1. Open the application Settings.
 2. Enter your **API Key** and **API Secret**.
@@ -102,7 +102,7 @@ Keys are encrypted with AES-256 using a key derived from your machine's Hardware
 
 ---
 
-## 6. License Activation
+## 7. License Activation
 
 1. Launch the application.
 2. On first launch, the backend checks for an existing valid license automatically.
@@ -115,7 +115,7 @@ Keys are encrypted with AES-256 using a key derived from your machine's Hardware
 
 ---
 
-## 6. Model Updates
+## 8. Model Updates
 
 The ONNX model can be updated without reinstalling the application:
 
@@ -126,7 +126,7 @@ The ONNX model can be updated without reinstalling the application:
 
 ---
 
-## 7. Security & Privacy
+## 9. Security & Privacy
 
 ### API Keys
 
@@ -158,7 +158,7 @@ The ONNX model can be updated without reinstalling the application:
 **Q:** Are my API keys safe in memory?  
 **A:** Yes. After decryption, secrets are zeroized in memory as soon as possible to minimize exposure.
 
-## 8. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|

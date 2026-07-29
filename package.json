@@ -17,29 +17,29 @@
         "deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1",
         "release": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 -Publish"
     },
-  "build": {
-    "appId": "com.lafm.cryptotradingterminal",
-    "productName": "Crypto Trading Terminal - LAFM",
-    "author": "LAFM",
-    "publish": {
-      "provider": "github",
-      "owner": "lafm",
-      "repo": "crypto-trading-app",
-      "releaseType": "release"
+    "build": {
+        "appId": "com.lafm.cryptotradingterminal",
+        "productName": "Crypto Trading Terminal - LAFM",
+        "author": "LAFM",
+        "publish": {
+            "provider": "github",
+            "owner": "lafm",
+            "repo": "crypto-trading-app",
+            "releaseType": "release"
+        },
+        "win": {
+            "target": "nsis",
+            "icon": "assets/icon.png",
+            "publisherName": "LAFM"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "shortcutName": "LAFM Trading Terminal"
+        }
     },
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png",
-      "publisherName": "LAFM"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "LAFM Trading Terminal"
-    }
-  },
     "devDependencies": {
         "concurrently": "^8.2.2",
         "electron": "^28.2.0",

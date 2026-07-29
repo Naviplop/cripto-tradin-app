@@ -227,9 +227,14 @@ class MonteCarloSimulator:
                 "equity_curves": [],
                 "passed": True,
             }
-        engine = BacktestEngine(initial_balance=self.initial_balance, **kwargs)
+        engine_kwargs = {k: v for k, v in kwargs.items() if k not in {"strategy_fn", "strategy_params", "candles"}}
+        engine = BacktestEngine(initial_balance=self.initial_balance, **engine_kwargs)
         engine.load_candles(self.candles)
-        base = engine.run(**kwargs)
+        base = engine.run(
+            strategy_fn=kwargs.get("strategy_fn"),
+            strategy_params=kwargs.get("strategy_params"),
+            candles=kwargs.get("candles"),
+        )
         base_eq = pd.Series([e[1] for e in base.equity_curve])
         base_returns = base_eq.pct_change().dropna().values
         n = len(base_returns)

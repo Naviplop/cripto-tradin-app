@@ -50,6 +50,7 @@ from presentation.routers import (
     trading_queries_router,
 )
 from backtest.api_routes import router as backtest_router
+from storage import initialize_db
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,7 @@ trading_engine = _SimpleEngine()
 async def lifespan(app: FastAPI) -> Any:
     app_state["market_feed"] = None
     app_state["market_connections"] = []
+    initialize_db()
     yield
     if app_state.get("market_feed"):
         await app_state["market_feed"].stop()

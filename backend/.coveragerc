@@ -1,0 +1,19 @@
+[run]
+source =
+    .
+omit =
+    tests/*
+    scripts/*
+    main.py
+    application/commands/*
+    application/dtos/*
+    application/queries/*
+    application/services/*
+    license_client.py
+    market_feed.py
+    secure_storage.py
+    domain/services/*
+
+[report]
+fail_under = 55
+show_missing = true
