@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import time
 
 import pytest
 
@@ -11,10 +12,16 @@ os.environ.setdefault("LICENSE_SECRET", "test-secret-key")
 def temp_db_path():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    os.remove(path)
-    yield path
     if os.path.exists(path):
         os.remove(path)
+    yield path
+    if os.path.exists(path):
+        for _ in range(5):
+            try:
+                os.remove(path)
+                break
+            except PermissionError:
+                time.sleep(0.05)
 
 
 @pytest.fixture(scope="session")

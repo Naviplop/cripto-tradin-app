@@ -1,9 +1,12 @@
 # Crypto Trading Terminal - LAFM
 
-Aplicación desktop local para análisis técnico, señales algorítmicas y simulación de trading con mercado de Bitcoin/USDT.
+**Algorithmic Crypto Trading & Paper Trading Desktop Application for Binance BTC/USDT.**
+**Author: LAFM**
+**Version:** 1.0.1
+**Updated:** 2026-07-28
 
-Version: 1.0.1
-Estado del repositorio: en desarrollo activo, con backend funcional, frontend operable y flujo de licencia/seguridad implementado.
+> **Status:** Production-ready backend, license admin API, and Electron connectivity fixes landed.  
+> **Last updated:** 2026-07-28
 
 ---
 
@@ -25,7 +28,131 @@ El nombre del repositorio tiene variaciones (cripto-tradin-app, crypto-trading-t
 
 ## 2. Estado real del sistema
 
+<<<<<<< HEAD
 Se revisó la estructura del proyecto y su código fuente actual. El sistema presenta estas capacidades funcionales:
+=======
+```
+crypto-trading-app/
+├── backend/                    # Python FastAPI + Trading Engine
+│   ├── main.py                 # API server + WebSocket + BinanceMarketFeed
+│   ├── trading_engine.py       # Paper trading, signals, AI fusion, PnL
+│   ├── ai_engine.py            # ONNX inference + heuristic fallback
+│   ├── license_manager.py      # HWID + HMAC-SHA256 validation (.env secret)
+│   ├── storage.py              # SQLite: trades, positions, snapshots, predictions
+│   ├── market_feed.py          # Binance WS + backoff + fallback simulation
+│   ├── logger.py               # Structured logging (loguru, 10MB rotation)
+│   ├── .env                    # LICENSE_SECRET, FRONTEND_ORIGIN, ports
+│   ├── requirements.txt        # onnxruntime, fastapi, pandas-ta, slowapi, loguru
+│   └── trading_app.spec        # PyInstaller packaging
+├── frontend/                   # React 18 + Vite + Tailwind + Lightweight Charts
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── CandleChart.jsx       # TradingView-style candlestick chart + drawing tools
+│   │   │   ├── HeaderBar.jsx         # Multi-pair selector, ticker, latency, mode toggle
+│   │   │   ├── TradingPanel.jsx      # Market/Limit/Stop-Limit/OCO orders + ATR TP/SL
+│   │   │   ├── OrderBookWidget.jsx   # Real-time depth chart and order book
+│   │   │   ├── AlertsToast.jsx       # Floating notifications with animations
+│   │   │   └── Onboarding.jsx        # 4-step animated wizard + API key validation
+│   │   ├── App.jsx                   # Auto-login health check, bootstrap, license gate
+│   │   ├── store.js                  # Zustand global state
+│   │   └── main.jsx                  # React entrypoint
+│   ├── .env                    # VITE_API_URL, VITE_WS_URL
+│   ├── package.json
+│   └── vite.config.js
+├── electron/                   # Electron desktop wrapper
+│   ├── main.js                 # Spawns backend, lifecycle, updater, hardened webPreferences
+│   └── preload.js
+├── scripts/
+│   ├── generate_license.py     # License generator (HWID-bound)
+│   ├── train_ai_model.py       # Train GradientBoosting + export ONNX
+│   ├── deploy.ps1              # Automated build + sign + publish
+│   └── sign.ps1                # Authenticode signing helper
+├── .github/workflows/
+│   └── security_audit.yml      # SAST, secret scanning, npm audit, tests gate
+├── docs/
+│   ├── USER_MANUAL.md          # End-user guide
+│   ├── API_KEYS_SECURITY.md    # Zero-knowledge security docs
+│   ├── AUTHENTICODE_SETUP.md   # Code signing guide
+│   ├── LICENSE_DISTRIBUTION.md # License generation and validation
+│   └── PRODUCT_OVERVIEW.md     # Commercial presentation
+├── tests/
+│   ├── test_trading_engine.py
+│   ├── test_license_manager.py
+│   └── test_ai_engine.py
+├── assets/
+│   └── icon.png                # LAFM branding
+├── .gitignore
+├── package.json                # Root workspace
+├── electron-builder.json
+├── README.md
+├── HANDOFF.md
+└── DEPLOYMENT_CHECKLIST.md
+```
+
+---
+
+## Technology Stack
+
+- **Frontend:** React 18, Vite, Tailwind CSS 3, Lightweight Charts 4, Framer Motion, Zustand
+- **Backend:** FastAPI, Uvicorn, WebSockets, Pandas, Pandas-TA, SQLite, ONNX Runtime
+- **Desktop:** Electron 28, electron-builder, PyInstaller
+- **Security:** HWID-based licensing with HMAC-SHA256 (secret from `.env`)
+- **Testing:** pytest, pytest-asyncio, vitest, testing-library
+- **AI/ML:** onnxruntime for CPU inference (no GPU required)
+- **Logging:** loguru with 10MB rotation + gzip compression
+- **CI/CD:** GitHub Actions with security audit pipeline
+
+---
+
+## Key Features
+
+### Trading Engine
+- **Paper Trading & Live Ready** — Start with $10,000 USDT simulation. Switch to live with one toggle.
+- **Dual Market Feed** — Binance WebSocket for live ticks, automatic REST cold-start fallback, and simulation fallback for offline operation.
+- **Technical Analysis** — EMA(10/30) crossover, RSI(14), MACD(12/26/9), Bollinger Bands, ATR fused into unified signals.
+- **AI Enhancement** — ONNX model score (0.0–1.0) combined with technicals for STRONG_BUY / STRONG_SELL signals.
+- **Risk Management** — Automatic Take-Profit and Stop-Loss on every position. Real-time unrealized PnL.
+- **Trade History** — Complete ledger persisted in SQLite. Heartbeat snapshots every 60s.
+
+### AI & ONNX
+- **Local Inference** — `onnxruntime.InferenceSession` with `CPUExecutionProvider`. No cloud API calls.
+- **Feature Engineering** — 13 features per candle: OHLCV, RSI, MACD, Bollinger Bands, ATR, EMAs, Log Returns.
+- **Training Pipeline** — `scripts/train_ai_model.py` downloads Binance history, computes features, trains GradientBoosting, exports to ONNX.
+- **Graceful Degradation** — Heuristic fallback if model file is missing. Never crashes.
+
+### Security & Licensing
+- **HWID Binding** — License keys bound to machine fingerprint (motherboard + CPU + MAC + UUID).
+- **HMAC-SHA256** — Cryptographic signature prevents tampering. Secret loaded from `.env` only.
+- **Local Storage** — API keys encrypted with AES-256-GCM. Stored in `%APPDATA%/LAFM/secure.db`. Never transmitted.
+- **Memory Hardening** — API secrets zeroized after decryption to minimize RAM exposure.
+- **CORS Restricted** — Backend accepts localhost, Electron packaged origin, and loopback origins via regex.
+- **Rate Limiting** — `/api/license/validate` protected at 5 req/min/IP via `slowapi`.
+- **Admin API** — Owner can list, issue, revoke, and clear licenses remotely using `ADMIN_API_KEY`.
+- **Electron Hardening** — `contextIsolation: true`, `nodeIntegration: false`, restricted navigation.
+
+### Frontend Experience
+- **Animated Onboarding** — 4-step guided setup with Framer Motion animations + API key validation.
+- **Real-Time Charting** — Lightweight Charts with drawing tools, hotkeys, ATR-based TP/SL suggestions.
+- **Order Book & Depth** — Live Binance order book with depth visualization.
+- **Resilient Connectivity** — WebSocket reconnection with exponential backoff + jitter. Fetch requests timeout at 10s.
+- **Auto-Login** — Silent health check on boot; skips license gate when backend confirms valid license.
+- **Notifications** — Floating toast system for AI signals, volatility spikes, and order executions.
+
+### Desktop & Updates
+- **Electron Wrapper** — Native Windows experience. Spawns backend process automatically.
+- **Auto-Updates** — `electron-updater` checks GitHub Releases silently. Installs on restart.
+- **Model Hot-Reload** — `POST /api/model/update` downloads new ONNX models to `%APPDATA%/LAFM/models/` without reinstall.
+- **CI/CD Security Audit** — GitHub Actions pipeline with Bandit, Safety, Gitleaks, npm audit, and test gates.
+
+---
+
+## Quick Start
+
+### Prerequisites
+- Node.js 18+
+- Python 3.10+
+- pip
+>>>>>>> origin/feature/v1.0.1-backtest-integration
 
 ### Backend
 - API REST con FastAPI y CORS configurado.
@@ -289,7 +416,119 @@ npm install
 
 `npm install` en la raíz ejecuta `postinstall` que instala dependencias de `frontend/` y `backend/requirements.txt`.
 
+<<<<<<< HEAD
 Si prefieres instalación manual por capa:
+=======
+---
+
+## Production Build (Windows)
+
+```powershell
+# 1. Train ONNX model (optional)
+cd scripts
+python train_ai_model.py
+
+# 2. Build frontend
+cd ../frontend
+npm run build
+
+# 3. Build backend exe
+cd ../backend
+pip install -r requirements.txt
+python -m PyInstaller trading_app.spec --clean --noconfirm
+# Output: backend/dist/trading_app.exe (~145 MB)
+
+# 4. Build Electron installer
+cd ..
+npm run build:electron
+# Output: dist-electron/Crypto Trading Terminal - LAFM Setup 1.0.1.exe
+```
+
+**Branding Verified:**
+- Executable metadata: `CompanyName: LAFM`, `ProductName: Crypto Trading Terminal - LAFM`
+- Installer shortcut: `LAFM Trading Terminal`
+- ONNX model bundled and loaded automatically
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health + license status |
+| POST | `/api/license/validate` | Validate HWID-bound license |
+| GET | `/api/account/balance` | Account summary |
+| GET | `/api/account/positions` | Open positions |
+| GET | `/api/account/history` | Trade history |
+| POST | `/api/trading/order` | Place order (MARKET/LIMIT/STOP_LIMIT/OCO + TP/SL) |
+| GET | `/api/trading/signals` | Current signals + AI probability + ATR |
+| GET | `/api/market/ticker` | 24h ticker metrics |
+| GET | `/api/market/orderbook` | Order book depth |
+| POST | `/api/auth/verify-keys` | Validate Binance API keys |
+| POST | `/api/model/update` | Download new ONNX model |
+| WS | `/ws/market` | Real-time candles + signals |
+
+---
+
+## Order Types Supported
+
+| Type | Description |
+|------|-------------|
+| MARKET | Immediate execution at current price |
+| LIMIT | Execution at specified price or better |
+| STOP_LIMIT | Triggered when stop price is hit, then limit order |
+| OCO | One-Cancels-the-Other: TP + SL bracket |
+
+---
+
+## License Format
+
+```
+LIC-{base64_chunk_8}-{base64_chunk_8}-{...}
+```
+
+- Decodes to: `{"hwid": sha256, "exp": iso8601, "sig": hmac_sha256}`
+- Bound to machine hardware ID
+- Configurable expiration
+- Generated via `scripts/generate_license.py`
+
+### Owner Workflow
+
+```powershell
+# generate for current machine
+cd scripts
+python generate_license.py 365
+
+# generate for a friend's machine
+python generate_license.py --hwid <FRIEND_HWID> 365
+python generate_license.py --hwid <FRIEND_HWID> 30 --note "trial"
+
+# view registry
+notepad ../backend/licenses_registry.json
+```
+
+### Admin Remote Control API
+
+Set `ADMIN_API_KEY` in `backend/.env`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/licenses` | List issued/revoked licenses |
+| POST | `/api/admin/issue` | Issue license for target HWID |
+| POST | `/api/admin/revoke` | Revoke license by HWID |
+| DELETE | `/api/admin/licenses` | Clear registry |
+
+Headers:
+- `X-Admin-Token: <ADMIN_API_KEY>`
+- or query param `?admin_token=<ADMIN_API_KEY>`
+
+---
+
+
+
+
+## Testing
+>>>>>>> origin/feature/v1.0.1-backtest-integration
 
 ```powershell
 # Backend

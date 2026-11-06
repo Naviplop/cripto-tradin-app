@@ -54,12 +54,11 @@ The bundled Python backend handles all exchange interactions locally.
 **No external LAFM servers are contacted during trading operations.**
 
 ### Backend CORS Policy
-- Only origins listed in `FRONTEND_ORIGIN` are permitted.
-- Credentials are allowed only from the configured frontend origin.
+- Electron packaged mode: allows `file://` and loopback origins via `CORS_REGEX`.
+- Development mode: allows configured `FRONTEND_ORIGIN` plus localhost Vite origins.
+- Admin endpoints require `ADMIN_API_KEY`.
 - Rate limiting applied to sensitive endpoints (`/api/license/validate`: 5 req/min/IP).
 - Global exception handler avoids leaking internal details.
-
----
 
 ## Hardware ID (HWID)
 

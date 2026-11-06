@@ -26,3 +26,9 @@ backend/models/*.pkl
 scripts/backend/models/
 *.onnx
 *.pkl
+
+.coverage
+.playwright-mcp/
+backend/.coverage
+*.pyc
+__pycache__/
