@@ -23,8 +23,8 @@
     "author": "LAFM",
     "publish": {
       "provider": "github",
-      "owner": "lafm",
-      "repo": "crypto-trading-app",
+      "owner": "Naviplop",
+      "repo": "cripto-tradin-app",
       "releaseType": "release"
     },
     "win": {
