@@ -27,32 +27,32 @@ def get_unit_of_work(request: Request) -> UnitOfWork:
 
 
 async def get_trade_repository(uow: UnitOfWork = ...) -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyTradeRepository
+    from infrastructure.persistence.sqlalchemy.repositories import TradeRepository as SqlAlchemyTradeRepository
     yield SqlAlchemyTradeRepository(uow)
 
 
 async def get_position_repository(uow: UnitOfWork = ...) -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyPositionRepository
+    from infrastructure.persistence.sqlalchemy.repositories import PositionRepository as SqlAlchemyPositionRepository
     yield SqlAlchemyPositionRepository(uow)
 
 
 async def get_license_repository(uow: UnitOfWork = ...) -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyLicenseRepository
+    from infrastructure.persistence.sqlalchemy.repositories import LicenseRepository as SqlAlchemyLicenseRepository
     yield SqlAlchemyLicenseRepository(uow)
 
 
 async def get_market_data_repository() -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyMarketDataRepository
+    from infrastructure.persistence.sqlalchemy.repositories import MarketDataRepository as SqlAlchemyMarketDataRepository
     yield SqlAlchemyMarketDataRepository()
 
 
 async def get_model_repository(uow: UnitOfWork = ...) -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyModelRepository
+    from infrastructure.persistence.sqlalchemy.repositories import ModelRepository as SqlAlchemyModelRepository
     yield SqlAlchemyModelRepository(uow)
 
 
 async def get_account_repository(uow: UnitOfWork = ...) -> AsyncGenerator:
-    from infrastructure.persistence.sqlalchemy.repositories import SqlAlchemyAccountRepository
+    from infrastructure.persistence.sqlalchemy.repositories import AccountRepository as SqlAlchemyAccountRepository
     yield SqlAlchemyAccountRepository(uow)
 
 

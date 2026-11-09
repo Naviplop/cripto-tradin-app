@@ -1,19 +1,19 @@
 from infrastructure.persistence.sqlalchemy import (
-    SqlAlchemyAccountRepository,
-    SqlAlchemyLicenseRepository,
-    SqlAlchemyMarketDataRepository,
-    SqlAlchemyModelRepository,
-    SqlAlchemyPositionRepository,
-    SqlAlchemyTradeRepository,
+    AccountRepository,
+    LicenseRepository,
+    MarketDataRepository,
+    ModelRepository,
+    PositionRepository,
+    TradeRepository,
     UnitOfWork,
 )
 
 __all__ = [
-    "SqlAlchemyAccountRepository",
-    "SqlAlchemyLicenseRepository",
-    "SqlAlchemyMarketDataRepository",
-    "SqlAlchemyModelRepository",
-    "SqlAlchemyPositionRepository",
-    "SqlAlchemyTradeRepository",
+    "AccountRepository",
+    "LicenseRepository",
+    "MarketDataRepository",
+    "ModelRepository",
+    "PositionRepository",
+    "TradeRepository",
     "UnitOfWork",
 ]

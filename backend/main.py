@@ -7,7 +7,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, List
+from typing import Any, List, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,10 +19,27 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from uvicorn import Config, Server
 
-from config.settings import get_settings
+# Config
+from config.settings import get_settings, Settings
+from config.dependencies import (
+    get_settings_dep,
+    get_unit_of_work,
+    get_trade_repository,
+    get_position_repository,
+    get_license_repository,
+    get_market_data_repository,
+    get_model_repository,
+    get_account_repository,
+    get_risk_engine,
+)
+
+# Domain
 from domain.entities.candle import Candle
-from domain.entities.order import OrderSide
-from domain.events import OrderPlaced, PositionClosed
+from domain.entities.order import Order, OrderSide, OrderType, OrderStatus
+from domain.entities.position import Position
+from domain.entities.trade import Trade
+from domain.entities.account import Account
+from domain.events import OrderPlaced, PositionClosed, MarketDataReceived
 from domain.repositories.interfaces import (
     IAccountRepository,
     ILicenseRepository,
@@ -33,11 +50,20 @@ from domain.repositories.interfaces import (
 )
 from domain.services import RiskEngine
 from domain.value_objects.money import Money
+
+# Infrastructure
 from infrastructure.ai.onnx_runtime import ONNXInferenceEngine
 from infrastructure.market_data.binance_ws import BinanceMarketFeed
 from infrastructure.security.hwid import get_hardware_id
-from infrastructure.security.license_crypto import validate_license_key
+from infrastructure.security.license_crypto import validate_license_key, build_license
+from infrastructure.persistence.sqlalchemy import (
+    Base,
+    UnitOfWork,
+)
+
+# Presentation
 from presentation.middlewares.exception_handlers import register_exception_handlers
+from presentation.middlewares.rate_limit import setup_middlewares
 from presentation.routers import (
     admin_router,
     auth_router,
@@ -50,6 +76,8 @@ from presentation.routers import (
     trading_queries_router,
 )
 from backtest.api_routes import router as backtest_router
+
+# Legacy storage (for backward compatibility)
 from storage import initialize_db
 
 logger = logging.getLogger(__name__)
@@ -58,14 +86,10 @@ settings = get_settings()
 
 app_state: dict[str, Any] = {}
 
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    BASE_PATH = sys._MEIPASS
 
-def _get_base_path() -> str:
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-BASE_PATH = _get_base_path()
 FRONTEND_ORIGIN = settings.frontend_origin
 EXTRA_CORS_ORIGINS = [o.strip() for o in settings.extra_cors_origins.split(",") if o.strip()]
 DEV_ORIGINS = [
@@ -78,58 +102,39 @@ DEV_ORIGINS = [
     "http://localhost:8765",
     "http://127.0.0.1:8765",
 ]
-ALL_CORS_ORIGINS = [FRONTEND_ORIGIN] + EXTRA_CORS_ORIGINS + DEV_ORIGINS
-TRADING_APP_DATA_DIR = settings.trading_app_data_dir or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "LAFM")
+ALL_CORS_ORIGINS = list(set([FRONTEND_ORIGIN] + EXTRA_CORS_ORIGINS + DEV_ORIGINS))
+
+TRADING_APP_DATA_DIR = settings.trading_app_data_dir or os.path.join(
+    os.environ.get("APPDATA", os.path.expanduser("~")), "LAFM"
+)
 LICENSE_REGISTRY_PATH = os.path.join(TRADING_APP_DATA_DIR, "licenses_registry.json")
 ADMIN_API_KEY = settings.admin_api_key
 os.makedirs(TRADING_APP_DATA_DIR, exist_ok=True)
 
-limiter = Limiter(key_func=get_remote_address)
+DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(TRADING_APP_DATA_DIR, 'trading_app.db')}"
+
+from infrastructure.persistence.sqlalchemy.unit_of_work import (
+    UnitOfWork as SQLAlchemyUnitOfWork,
+    create_session_factory,
+)
+uow_factory = create_session_factory(DATABASE_URL)
 
 
-async def _broadcast_market_data(candle: Candle, signals: dict) -> None:
-    for ws in list(app_state.get("market_connections", [])):
-        try:
-            await ws.send_json({
-                "type": "market_data",
-                "candle": {
-                    "time": candle.timestamp.isoformat(),
-                    "open": candle.open.to_float(),
-                    "high": candle.high.to_float(),
-                    "low": candle.low.to_float(),
-                    "close": candle.close.to_float(),
-                    "volume": candle.volume,
-                },
-                "signals": signals,
-            })
-        except Exception:
-            if ws in app_state.get("market_connections", []):
-                app_state["market_connections"].remove(ws)
-
-
-async def _broadcast_account_update(account_data: dict) -> None:
-    for ws in list(app_state.get("market_connections", [])):
-        try:
-            await ws.send_json({
-                "type": "account_update",
-                "data": account_data,
-            })
-        except Exception:
-            if ws in app_state.get("market_connections", []):
-                app_state["market_connections"].remove(ws)
-
-
-class _SimpleEngine:
+class TradingEngine:
+    """
+    Main trading engine that orchestrates market data, signals, orders, and positions.
+    Uses domain entities and infrastructure services.
+    """
     def __init__(self) -> None:
         self.balance = 10000.0
         self.initial_balance = 10000.0
-        self.positions: list = []
-        self.orders: list = []
-        self.trade_history: list = []
-        self.candles: list = []
+        self.positions: List[Position] = []
+        self.orders: List[Order] = []
+        self.trade_history: List[Trade] = []
+        self.candles: List[Candle] = []
         self.running = False
-        self.broadcast_market = None
-        self.broadcast_account = None
+        self.broadcast_market: Optional[Any] = None
+        self.broadcast_account: Optional[Any] = None
         self.order_counter = 0
         self.trade_counter = 0
         self.current_price = 0.0
@@ -142,9 +147,63 @@ class _SimpleEngine:
             "atr": 0.0,
         }
         self.ai_predictor = ONNXInferenceEngine()
+        self._load_state()
+
+    def _load_state(self) -> None:
+        try:
+            from sqlalchemy import select
+            from infrastructure.persistence.sqlalchemy.models import (
+                AccountSnapshotORM, PositionORM, TradeORM
+            )
+            
+            with engine.connect() as conn:
+                latest_snapshot = conn.execute(
+                    select(AccountSnapshotORM).order_by(AccountSnapshotORM.timestamp.desc()).limit(1)
+                ).first()
+                if latest_snapshot:
+                    self.balance = latest_snapshot.balance
+                    self.initial_balance = latest_snapshot.initial_balance
+
+                open_positions = conn.execute(
+                    select(PositionORM).where(PositionORM.closed_at.is_(None))
+                ).all()
+                for pos_orm in open_positions:
+                    position = Position(
+                        id=pos_orm.id,
+                        side=OrderSide(pos_orm.side),
+                        entry_price=Money(pos_orm.entry_price, "USDT"),
+                        quantity=pos_orm.quantity,
+                        tp=Money(pos_orm.tp, "USDT") if pos_orm.tp else None,
+                        sl=Money(pos_orm.sl, "USDT") if pos_orm.sl else None,
+                        unrealized_pnl=Money(pos_orm.unrealized_pnl, "USDT"),
+                        timestamp=pos_orm.timestamp,
+                    )
+                    self.positions.append(position)
+
+                trade_history = conn.execute(
+                    select(TradeORM).order_by(TradeORM.timestamp.desc()).limit(1000)
+                ).all()
+                for trade_orm in trade_history:
+                    trade = Trade(
+                        id=f"TRD-{trade_orm.id:06d}",
+                        side=OrderSide(trade_orm.side),
+                        entry_price=Money(trade_orm.entry_price, "USDT"),
+                        exit_price=Money(trade_orm.exit_price, "USDT"),
+                        quantity=trade_orm.quantity,
+                        pnl=Money(trade_orm.pnl, "USDT"),
+                        timestamp=trade_orm.timestamp,
+                    )
+                    self.trade_history.append(trade)
+                
+                if self.trade_history:
+                    self.trade_counter = max(int(t.id.split("-")[1]) for t in self.trade_history)
+
+            logger.info("Loaded state: balance=%.2f, positions=%d, trades=%d", self.balance, len(self.positions), len(self.trade_history))
+        except Exception as e:
+            logger.error("Failed to load state from storage: %s", e)
 
     def get_account_summary(self) -> dict:
-        total_unrealized = sum(p.get("unrealized_pnl", 0.0) for p in self.positions)
+        total_unrealized = sum(p.unrealized_pnl.to_float() for p in self.positions)
         return {
             "balance": self.balance,
             "initial_balance": self.initial_balance,
@@ -153,10 +212,22 @@ class _SimpleEngine:
             "positions_count": len(self.positions),
         }
 
-    def get_positions(self) -> list:
-        return self.positions
+    def get_positions(self) -> List[dict]:
+        return [
+            {
+                "id": p.id,
+                "side": p.side.value,
+                "entry_price": p.entry_price.to_float(),
+                "quantity": p.quantity,
+                "unrealized_pnl": p.unrealized_pnl.to_float(),
+                "tp": p.tp.to_float() if p.tp else None,
+                "sl": p.sl.to_float() if p.sl else None,
+                "timestamp": p.timestamp.isoformat(),
+            }
+            for p in self.positions
+        ]
 
-    def get_trade_history(self) -> list:
+    def get_trade_history(self) -> List[dict]:
         return [
             {
                 "id": t.id,
@@ -170,7 +241,10 @@ class _SimpleEngine:
             for t in self.trade_history
         ]
 
-    def place_order(self, side, order_type, quantity, price=None, tp=None, sl=None, stop_price=None, limit_price=None) -> dict:
+    def place_order(self, side: OrderSide, order_type: OrderType, quantity: float,
+                    price: Optional[float] = None, tp: Optional[float] = None,
+                    sl: Optional[float] = None, stop_price: Optional[float] = None,
+                    limit_price: Optional[float] = None) -> dict:
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
         if order_type == OrderType.LIMIT and price is None:
@@ -181,88 +255,154 @@ class _SimpleEngine:
             raise ValueError("OCO orders require a price and limit_price")
 
         self.order_counter += 1
-        order = {
-            "id": f"ORD-{self.order_counter:06d}",
-            "side": side.value,
-            "order_type": order_type.value,
-            "quantity": quantity,
-            "price": price or limit_price,
+        order = Order(
+            id=f"ORD-{self.order_counter:06d}",
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=Money(price, "USDT") if price else None,
+            tp=Money(tp, "USDT") if tp else None,
+            sl=Money(sl, "USDT") if sl else None,
+            stop_price=Money(stop_price, "USDT") if stop_price else None,
+            limit_price=Money(limit_price, "USDT") if limit_price else None,
+        )
+        self.orders.append(order)
+
+        if order_type == OrderType.MARKET:
+            order.status = OrderStatus.FILLED
+            order.filled_price = Money(self.current_price, "USDT")
+            position = Position(
+                id=None,
+                side=side,
+                entry_price=Money(self.current_price, "USDT"),
+                quantity=quantity,
+                tp=Money(tp, "USDT") if tp else None,
+                sl=Money(sl, "USDT") if sl else None,
+            )
+            self.positions.append(position)
+            self._save_position(position)
+            logger.info(f"Market order filled: {order.id} at {self.current_price}")
+        elif order_type == OrderType.LIMIT:
+            order.status = OrderStatus.PENDING
+            logger.info(f"Limit order placed: {order.id} at {price}")
+        elif order_type == OrderType.STOP_LIMIT:
+            order.status = OrderStatus.PENDING
+            logger.info(f"Stop-Limit order placed: {order.id} stop={stop_price} limit={limit_price}")
+        elif order_type == OrderType.OCO:
+            order.status = OrderStatus.PENDING
+            logger.info(f"OCO order placed: {order.id} price={price} limit={limit_price}")
+
+        self._notify_account()
+        return {
+            "id": order.id,
+            "status": order.status.value,
+            "side": order.side.value,
+            "order_type": order.order_type.value,
+            "quantity": order.quantity,
+            "price": order.filled_price.to_float() if order.filled_price else (order.price.to_float() if order.price else None),
             "tp": tp,
             "sl": sl,
             "stop_price": stop_price,
             "limit_price": limit_price,
-            "status": "PENDING",
         }
-        self.orders.append(order)
 
-        if order_type == OrderType.MARKET:
-            order["status"] = "FILLED"
-            order["filled_price"] = self.current_price
-            position = {
-                "side": side.value,
-                "entry_price": self.current_price,
-                "quantity": quantity,
-                "tp": tp,
-                "sl": sl,
-                "unrealized_pnl": 0.0,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            self.positions.append(position)
-            logger.info(f"Market order filled: {order['id']} at {self.current_price}")
-        elif order_type == OrderType.LIMIT:
-            order["status"] = "PENDING"
-            logger.info(f"Limit order placed: {order['id']} at {price}")
-        elif order_type == OrderType.STOP_LIMIT:
-            order["status"] = "PENDING"
-            logger.info(f"Stop-Limit order placed: {order['id']} stop={stop_price} limit={limit_price}")
-        elif order_type == OrderType.OCO:
-            order["status"] = "PENDING"
-            logger.info(f"OCO order placed: {order['id']} price={price} limit={limit_price}")
+    def _save_position(self, position: Position) -> None:
+        try:
+            from sqlalchemy import insert
+            from infrastructure.persistence.sqlalchemy.models import PositionORM
+            
+            with engine.connect() as conn:
+                result = conn.execute(insert(PositionORM).values(
+                    side=position.side.value,
+                    entry_price=position.entry_price.to_float(),
+                    quantity=position.quantity,
+                    tp=position.tp.to_float() if position.tp else None,
+                    sl=position.sl.to_float() if position.sl else None,
+                    unrealized_pnl=position.unrealized_pnl.to_float(),
+                    timestamp=position.timestamp,
+                ))
+                position.id = result.inserted_primary_key[0]
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to save position: %s", e)
 
-        return order
-
-    def close_position(self, position: dict) -> None:
-        pnl = 0.0
-        if position["side"] == "BUY":
-            pnl = (self.current_price - position["entry_price"]) * position["quantity"]
+    def close_position(self, position: Position) -> None:
+        pnl = Money(0, "USDT")
+        if position.side == OrderSide.BUY:
+            pnl = (Money(self.current_price, "USDT") - position.entry_price) * position.quantity
         else:
-            pnl = (position["entry_price"] - self.current_price) * position["quantity"]
+            pnl = (position.entry_price - Money(self.current_price, "USDT")) * position.quantity
 
-        self.balance += pnl
+        self.balance += pnl.to_float()
         self.trade_counter += 1
         trade = Trade(
             id=f"TRD-{self.trade_counter:06d}",
-            side=OrderSide(position["side"]),
-            entry_price=Money(position["entry_price"]),
-            exit_price=Money(self.current_price),
-            quantity=position["quantity"],
-            pnl=Money(pnl),
+            side=position.side,
+            entry_price=position.entry_price,
+            exit_price=Money(self.current_price, "USDT"),
+            quantity=position.quantity,
+            pnl=pnl,
         )
         self.trade_history.append(trade)
+        self._save_trade(trade)
+        self._close_position_in_db(position.id)
         self.positions.remove(position)
-        logger.info(f"Position closed: {trade.id} PnL: {pnl:.2f}")
+        logger.info(f"Position closed: {trade.id} PnL: {pnl.to_float():.2f}")
+        self._notify_account()
+
+    def _save_trade(self, trade: Trade) -> None:
+        try:
+            from sqlalchemy import insert
+            from infrastructure.persistence.sqlalchemy.models import TradeORM
+            
+            with engine.connect() as conn:
+                conn.execute(insert(TradeORM).values(
+                    side=trade.side.value,
+                    entry_price=trade.entry_price.to_float(),
+                    exit_price=trade.exit_price.to_float(),
+                    quantity=trade.quantity,
+                    pnl=trade.pnl.to_float(),
+                    timestamp=trade.timestamp,
+                ))
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to save trade: %s", e)
+
+    def _close_position_in_db(self, position_id: Optional[int]) -> None:
+        if position_id is None:
+            return
+        try:
+            from sqlalchemy import update
+            from infrastructure.persistence.sqlalchemy.models import PositionORM
+            
+            with engine.connect() as conn:
+                conn.execute(update(PositionORM).where(PositionORM.id == position_id).values(
+                    closed_at=datetime.now(timezone.utc),
+                    close_price=self.current_price,
+                    realized_pnl=0.0,
+                ))
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to close position in DB: %s", e)
 
     def update_positions(self) -> None:
         if not self.positions or self.current_price <= 0:
             return
         for position in list(self.positions):
-            pnl = 0.0
-            if position["side"] == "BUY":
-                pnl = (self.current_price - position["entry_price"]) * position["quantity"]
-                position["unrealized_pnl"] = pnl
-                if position.get("tp") and self.current_price >= position["tp"]:
+            if position.side == OrderSide.BUY:
+                position.unrealized_pnl = (Money(self.current_price, "USDT") - position.entry_price) * position.quantity
+                if position.tp and self.current_price >= position.tp.to_float():
                     logger.info(f"Take-Profit hit at {self.current_price}")
                     self.close_position(position)
-                elif position.get("sl") and self.current_price <= position["sl"]:
+                elif position.sl and self.current_price <= position.sl.to_float():
                     logger.info(f"Stop-Loss hit at {self.current_price}")
                     self.close_position(position)
             else:
-                pnl = (position["entry_price"] - self.current_price) * position["quantity"]
-                position["unrealized_pnl"] = pnl
-                if position.get("tp") and self.current_price <= position["tp"]:
+                position.unrealized_pnl = (position.entry_price - Money(self.current_price, "USDT")) * position.quantity
+                if position.tp and self.current_price <= position.tp.to_float():
                     logger.info(f"Take-Profit hit at {self.current_price}")
                     self.close_position(position)
-                elif position.get("sl") and self.current_price >= position["sl"]:
+                elif position.sl and self.current_price >= position.sl.to_float():
                     logger.info(f"Stop-Loss hit at {self.current_price}")
                     self.close_position(position)
 
@@ -358,7 +498,7 @@ class _SimpleEngine:
         state.setdefault("atr", 0.0)
         return state
 
-    def get_candles(self, symbol="BTCUSDT", interval="1m", limit=200) -> list:
+    def get_candles(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 200) -> List[dict]:
         seen = set()
         unique = []
         for c in list(self.candles):
@@ -387,7 +527,12 @@ class _SimpleEngine:
             self.candles[-1] = candle
         self.update_positions()
         signals, enriched = self._generate_signals()
-        ai_prob = self.ai_predictor.predict(enriched)
+        ai_result = self.ai_predictor.predict(enriched)
+        ai_prob = 0.5
+        if ai_result.label == "BUY":
+            ai_prob = ai_result.confidence
+        elif ai_result.label == "SELL":
+            ai_prob = 1.0 - ai_result.confidence
         combined = _combine_signal_with_ai(signals.get("signal", "NEUTRAL"), ai_prob)
         signals["ai_probability"] = round(ai_prob, 4)
         signals["combined_signal"] = combined
@@ -405,35 +550,36 @@ class _SimpleEngine:
         self.running = False
 
     def snapshot_account(self) -> None:
-        pass
+        try:
+            from sqlalchemy import insert
+            from infrastructure.persistence.sqlalchemy.models import AccountSnapshotORM
+            
+            total_unrealized = sum(p.unrealized_pnl.to_float() for p in self.positions)
+            with engine.connect() as conn:
+                conn.execute(insert(AccountSnapshotORM).values(
+                    balance=self.balance,
+                    initial_balance=self.initial_balance,
+                    total_equity=self.balance + total_unrealized,
+                    timestamp=datetime.now(timezone.utc),
+                ))
+                conn.commit()
+        except Exception as e:
+            logger.error("Snapshot account error: %s", e)
 
     def _notify_account(self) -> None:
         if self.broadcast_account:
             try:
-                import asyncio
                 loop = asyncio.get_running_loop()
                 loop.create_task(self.broadcast_account(self.get_account_summary()))
             except RuntimeError:
                 pass
 
 
-def _combine_signal_with_ai(tech_signal: str, ai_prob: float) -> str:
-    if tech_signal == "BUY" and ai_prob > 0.65:
-        return "STRONG_BUY"
-    if tech_signal == "SELL" and ai_prob < 0.35:
-        return "STRONG_SELL"
-    if tech_signal == "BUY" and ai_prob > 0.55:
-        return "BUY"
-    if tech_signal == "SELL" and ai_prob < 0.45:
-        return "SELL"
-    return "NEUTRAL"
-
-
-class _LicenseManager:
+class LicenseManager:
     def __init__(self) -> None:
         self.hwid = get_hardware_id()
         self.valid = False
-        self.license_data = None
+        self.license_data: Optional[dict] = None
 
     def get_hardware_id(self) -> str:
         return self.hwid
@@ -444,22 +590,23 @@ class _LicenseManager:
         valid = validate_license_key(license_key)
         if valid:
             self.valid = True
+            self.license_data = {"hwid": self.hwid, "key": license_key}
         return valid
 
     def is_valid(self) -> bool:
         return self.valid
 
-    def get_license_info(self) -> dict | None:
+    def get_license_info(self) -> Optional[dict]:
         if not self.license_data:
             return None
         return {
             "hwid": self.license_data.get("hwid"),
-            "expiry": self.license_data.get("exp"),
+            "expiry": self.license_data.get("expiry"),
             "valid": self.valid,
         }
 
-
-license_manager = _LicenseManager()
+    def issue_license(self, target_hwid: str, days_valid: int = 365) -> str:
+        return build_license(target_hwid, days_valid)
 
 
 def _load_registry() -> dict:
@@ -478,11 +625,6 @@ def _save_registry(data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _build_license(target_hwid: str, days_valid: int = 365) -> str:
-    from infrastructure.security.license_crypto import build_license
-    return build_license(target_hwid, days_valid)
-
-
 def _check_admin_token(request: Request) -> None:
     token = request.headers.get("X-Admin-Token") or request.query_params.get("admin_token")
     if not ADMIN_API_KEY or token != ADMIN_API_KEY:
@@ -490,15 +632,76 @@ def _check_admin_token(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-trading_engine = _SimpleEngine()
+trading_engine = TradingEngine()
+license_manager = LicenseManager()
+
+
+async def _broadcast_market_data(candle: Candle, signals: dict) -> None:
+    for ws in list(app_state.get("market_connections", [])):
+        try:
+            await ws.send_json({
+                "type": "market_data",
+                "candle": {
+                    "time": candle.timestamp.isoformat(),
+                    "open": candle.open.to_float(),
+                    "high": candle.high.to_float(),
+                    "low": candle.low.to_float(),
+                    "close": candle.close.to_float(),
+                    "volume": candle.volume,
+                },
+                "signals": signals,
+            })
+        except Exception:
+            if ws in app_state.get("market_connections", []):
+                app_state["market_connections"].remove(ws)
+
+
+async def _broadcast_account_update(account_data: dict) -> None:
+    for ws in list(app_state.get("market_connections", [])):
+        try:
+            await ws.send_json({
+                "type": "account_update",
+                "data": account_data,
+            })
+        except Exception:
+            if ws in app_state.get("market_connections", []):
+                app_state["market_connections"].remove(ws)
+
+
+trading_engine.broadcast_market = _broadcast_market_data
+trading_engine.broadcast_account = _broadcast_account_update
+
+
+def _combine_signal_with_ai(tech_signal: str, ai_prob: float) -> str:
+    if tech_signal == "BUY" and ai_prob > 0.65:
+        return "STRONG_BUY"
+    if tech_signal == "SELL" and ai_prob < 0.35:
+        return "STRONG_SELL"
+    if tech_signal == "BUY" and ai_prob > 0.55:
+        return "BUY"
+    if tech_signal == "SELL" and ai_prob < 0.45:
+        return "SELL"
+    return "NEUTRAL"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Any:
     app_state["market_feed"] = None
     app_state["market_connections"] = []
+    
+    Base.metadata.create_all(engine)
     initialize_db()
+    
+    market_feed = BinanceMarketFeed(on_candle=trading_engine._process_tick)
+    app_state["market_feed"] = market_feed
+    await market_feed.start()
+    
+    logger.info("Trading Engine started with Binance Market Feed")
+    
+    asyncio.create_task(snapshot_worker())
+    
     yield
+    
     if app_state.get("market_feed"):
         await app_state["market_feed"].stop()
     trading_engine.stop()
@@ -506,21 +709,9 @@ async def lifespan(app: FastAPI) -> Any:
 
 
 app = FastAPI(title="Crypto Trading Engine", lifespan=lifespan)
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=settings.cors_regex,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=600,
-)
-
+setup_middlewares(app)
 register_exception_handlers(app)
-
 
 app.include_router(health_router, prefix="/api", tags=["health"])
 app.include_router(market_router, prefix="/api/market", tags=["market"])
